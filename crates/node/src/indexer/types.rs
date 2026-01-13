@@ -82,7 +82,7 @@ pub type ChainSignatureResponse = mpc_contract::crypto_shared::SignatureResponse
 pub type ChainCKDResponse = mpc_contract::crypto_shared::CKDResponse;
 
 pub use mpc_contract::crypto_shared::k256_types;
-use mpc_contract::crypto_shared::{ed25519_types, SignatureResponse};
+use mpc_contract::crypto_shared::ed25519_types;
 use mpc_contract::primitives::signature::Payload;
 
 const MAX_RECOVERY_ID: u8 = 3;
@@ -274,8 +274,25 @@ impl ChainSignatureRespondArgs {
                 request.payload.clone(),
                 request.domain,
             ),
-            response: SignatureResponse::Ed25519 {
+            response: ChainSignatureResponse::Ed25519 {
                 signature: ed25519_types::Signature::new(response),
+            },
+        })
+    }
+
+    /// Creates response args for a Dilithium (ML-DSA-87) signature
+    pub fn new_dilithium(
+        request: &SignatureRequest,
+        signature: &qp_rusty_crystals_threshold::Signature,
+    ) -> anyhow::Result<Self> {
+        Ok(ChainSignatureRespondArgs {
+            request: ChainSignatureRequest::new(
+                request.tweak.clone(),
+                request.payload.clone(),
+                request.domain,
+            ),
+            response: ChainSignatureResponse::Dilithium {
+                signature: signature.as_bytes().to_vec(),
             },
         })
     }

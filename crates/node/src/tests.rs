@@ -274,6 +274,13 @@ pub async fn request_signature_and_await_response(
             rand::thread_rng().fill_bytes(payload.as_mut());
             Payload::Eddsa(Bytes::new(payload.to_vec()).unwrap())
         }
+        SignatureScheme::Dilithium => {
+            // Dilithium uses EdDSA-style payload (raw message bytes)
+            let len = rand::thread_rng().gen_range(32..1232);
+            let mut payload = vec![0; len];
+            rand::thread_rng().fill_bytes(payload.as_mut());
+            Payload::Eddsa(Bytes::new(payload.to_vec()).unwrap())
+        }
         SignatureScheme::Bls12381 => unreachable!(),
     };
     let request = SignatureRequestFromChain {

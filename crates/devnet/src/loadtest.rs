@@ -296,6 +296,13 @@ impl RunLoadtestCmd {
                         domain_config,
                     })
                 }
+                SignatureScheme::Dilithium => {
+                    // Dilithium signing uses the same contract call pattern as Ed25519/ECDSA
+                    ContractActionCall::Sign(crate::contracts::RequestActionCallArgs {
+                        mpc_contract: mpc_account,
+                        domain_config,
+                    })
+                }
             }
         } else {
             ContractActionCall::LegacySign(crate::contracts::LegacySignActionCallArgs {

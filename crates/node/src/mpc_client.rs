@@ -8,6 +8,7 @@ use crate::metrics;
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
 use crate::primitives::MpcTaskId;
 use crate::providers::ckd::CKDProvider;
+use crate::providers::dilithium::DilithiumSignatureProvider;
 use crate::providers::eddsa::EddsaSignatureProvider;
 use crate::providers::robust_ecdsa::RobustEcdsaSignatureProvider;
 use crate::providers::{EcdsaSignatureProvider, SignatureProvider};
@@ -48,6 +49,7 @@ pub struct MpcClient {
     robust_ecdsa_signature_provider: Arc<RobustEcdsaSignatureProvider>,
     eddsa_signature_provider: Arc<EddsaSignatureProvider>,
     ckd_provider: Arc<CKDProvider>,
+    dilithium_signature_provider: Arc<DilithiumSignatureProvider>,
     domain_to_scheme: HashMap<DomainId, SignatureScheme>,
 }
 
@@ -62,6 +64,7 @@ impl MpcClient {
         robust_ecdsa_signature_provider: Arc<RobustEcdsaSignatureProvider>,
         eddsa_signature_provider: Arc<EddsaSignatureProvider>,
         ckd_provider: Arc<CKDProvider>,
+        dilithium_signature_provider: Arc<DilithiumSignatureProvider>,
         domain_to_scheme: HashMap<DomainId, SignatureScheme>,
     ) -> Self {
         Self {
@@ -73,6 +76,7 @@ impl MpcClient {
             robust_ecdsa_signature_provider,
             eddsa_signature_provider,
             ckd_provider,
+            dilithium_signature_provider,
             domain_to_scheme,
         }
     }
@@ -385,6 +389,22 @@ impl MpcClient {
 
                                         Ok(response)
                                     }
+                                    Some(SignatureScheme::Dilithium) => {
+                                        let (signature, _public_key) = timeout(
+                                            Duration::from_secs(this.config.signature.timeout_sec),
+                                            this.dilithium_signature_provider
+                                                .clone()
+                                                .make_signature(signature_attempt.request.id),
+                                        )
+                                        .await??;
+
+                                        let response = ChainSignatureRespondArgs::new_dilithium(
+                                            &signature_attempt.request,
+                                            &signature,
+                                        )?;
+
+                                        Ok(response)
+                                    }
                                     None => Err(anyhow::anyhow!(
                                         "Signature scheme is not found for domain: {:?}",
                                         signature_attempt.request.domain.clone()
@@ -464,7 +484,8 @@ impl MpcClient {
                                     }
                                     Some(SignatureScheme::Secp256k1)
                                     | Some(SignatureScheme::V2Secp256k1)
-                                    | Some(SignatureScheme::Ed25519) => Err(anyhow::anyhow!(
+                                    | Some(SignatureScheme::Ed25519)
+                                    | Some(SignatureScheme::Dilithium) => Err(anyhow::anyhow!(
                                         "Signature scheme is not allowed for domain: {:?}",
                                         ckd_attempt.request.domain_id.clone()
                                     )),
@@ -543,6 +564,12 @@ impl MpcClient {
             MpcTaskId::CKDTaskId(_) => self.ckd_provider.clone().process_channel(channel).await?,
             MpcTaskId::RobustEcdsaTaskId(_) => {
                 self.robust_ecdsa_signature_provider
+                    .clone()
+                    .process_channel(channel)
+                    .await?
+            }
+            MpcTaskId::DilithiumTaskId(_) => {
+                self.dilithium_signature_provider
                     .clone()
                     .process_channel(channel)
                     .await?

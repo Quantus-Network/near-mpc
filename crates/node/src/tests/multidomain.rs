@@ -74,7 +74,8 @@ async fn test_basic_multidomain() {
         match domain.scheme {
             SignatureScheme::Secp256k1
             | SignatureScheme::Ed25519
-            | SignatureScheme::V2Secp256k1 => {
+            | SignatureScheme::V2Secp256k1
+            | SignatureScheme::Dilithium => {
                 assert!(request_signature_and_await_response(
                     &mut setup.indexer,
                     &format!("user{}", domain.id.0),
@@ -138,7 +139,8 @@ async fn test_basic_multidomain() {
         match domain.scheme {
             SignatureScheme::Secp256k1
             | SignatureScheme::Ed25519
-            | SignatureScheme::V2Secp256k1 => {
+            | SignatureScheme::V2Secp256k1
+            | SignatureScheme::Dilithium => {
                 assert!(request_signature_and_await_response(
                     &mut setup.indexer,
                     &format!("user{}", domain.id.0),
@@ -187,7 +189,8 @@ async fn test_basic_multidomain() {
         match domain.scheme {
             SignatureScheme::Secp256k1
             | SignatureScheme::Ed25519
-            | SignatureScheme::V2Secp256k1 => {
+            | SignatureScheme::V2Secp256k1
+            | SignatureScheme::Dilithium => {
                 assert!(request_signature_and_await_response(
                     &mut setup.indexer,
                     &format!("user{}", domain.id.0),

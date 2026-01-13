@@ -175,6 +175,11 @@ impl MpcContract {
             SignatureScheme::Bls12381 => {
                 env::panic_str(&InvalidParameters::InvalidDomainId.message("Selected domain is used for Bls12381, which is not compatible with this function").to_string(),);
             }
+            SignatureScheme::Dilithium => {
+                // Dilithium (ML-DSA-87) can sign arbitrary messages
+                // For now, we require EdDSA-style payload (raw message bytes)
+                request.payload.as_eddsa().expect("Payload is not Dilithium/EdDSA compatible");
+            }
         }
 
         let gas_required =
@@ -301,6 +306,13 @@ impl MpcContract {
                     .into()
             }
             PublicKeyExtended::Bls12381 { public_key } => public_key,
+            PublicKeyExtended::Dilithium { public_key } => {
+                // Dilithium supports HD derivation via qp-rusty-crystals-hdwallet,
+                // but only with hardened paths (non-hardened tweaking is not possible
+                // for lattice-based crypto). For now, return the root key.
+                // TODO: Integrate hardened HD derivation for Dilithium keys
+                public_key
+            }
         };
 
         Ok(derived_public_key)
@@ -1498,7 +1510,7 @@ impl MpcContract {
     /// under the signer’s account ID.
     ///
     /// # Errors
-    /// - [`InvalidState::ProtocolStateNotRunning`] if the protocol is not in the `Running` state.  
+    /// - [`InvalidState::ProtocolStateNotRunning`] if the protocol is not in the `Running` state.
     /// - [`InvalidState::NotParticipant`] if the signer is not a current participant.
     /// # Note:
     /// - might require a deposit
@@ -1775,6 +1787,26 @@ mod tests {
             SignatureScheme::Bls12381 => {
                 let (pk, sk) = new_bls12381g2(rng);
                 (pk.into(), SharedSecretKey::Bls12381(sk))
+            }
+            SignatureScheme::Dilithium => {
+                // Generate Dilithium keys using the threshold dealer keygen
+                // For tests, we use a simple 2-of-3 setup and just take the public key
+                let mut seed = [0u8; 32];
+                rng.fill_bytes(&mut seed);
+                let config = qp_rusty_crystals_threshold::ThresholdConfig::new(2, 3)
+                    .expect("Valid threshold config");
+                let (public_key, _shares) =
+                    qp_rusty_crystals_threshold::generate_with_dealer(&seed, config)
+                        .expect("Key generation should succeed");
+
+                // Convert to contract interface type
+                let mut boxed_bytes = Box::new([0u8; 2592]);
+                boxed_bytes.copy_from_slice(public_key.as_bytes());
+                let pk = dtos::DilithiumPublicKey::from(boxed_bytes);
+
+                // For Dilithium, we don't need the secret key in contract tests
+                // since we don't do actual signing in contract unit tests
+                (pk.into(), SharedSecretKey::Ed25519(curve25519_dalek::Scalar::ZERO))
             }
         }
     }

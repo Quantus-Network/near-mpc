@@ -74,7 +74,7 @@ async fn test_key_resharing_simple(
 
     // Sanity check.
     match domain.scheme {
-        SignatureScheme::Secp256k1 | SignatureScheme::Ed25519 | SignatureScheme::V2Secp256k1 => {
+        SignatureScheme::Secp256k1 | SignatureScheme::Ed25519 | SignatureScheme::V2Secp256k1 | SignatureScheme::Dilithium => {
             assert!(request_signature_and_await_response(
                 &mut setup.indexer,
                 "user1",
@@ -118,7 +118,7 @@ async fn test_key_resharing_simple(
         .expect("Timeout waiting for resharing to complete");
 
     match domain.scheme {
-        SignatureScheme::Secp256k1 | SignatureScheme::Ed25519 | SignatureScheme::V2Secp256k1 => {
+        SignatureScheme::Secp256k1 | SignatureScheme::Ed25519 | SignatureScheme::V2Secp256k1 | SignatureScheme::Dilithium => {
             assert!(request_signature_and_await_response(
                 &mut setup.indexer,
                 "user1",
