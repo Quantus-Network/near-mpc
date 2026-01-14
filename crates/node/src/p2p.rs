@@ -100,7 +100,7 @@ enum Packet {
 impl TlsConnection {
     /// Both sides of the connection must complete handshake within this time, or else
     /// the connection is considered not successful.
-    const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+    const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
     /// Makes a TLS/TCP connection to the given address, authenticating the
     /// other side as the given participant.

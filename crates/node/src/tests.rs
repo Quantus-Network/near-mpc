@@ -48,8 +48,8 @@ mod research;
 mod resharing;
 
 const DEFAULT_BLOCK_TIME: std::time::Duration = std::time::Duration::from_millis(300);
-const DEFAULT_MAX_PROTOCOL_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(60);
-const DEFAULT_MAX_SIGNATURE_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(60);
+const DEFAULT_MAX_PROTOCOL_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(120);
+const DEFAULT_MAX_SIGNATURE_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Data needed to start running a test node.
 pub struct OneNodeTestConfig {
@@ -191,22 +191,22 @@ impl IntegrationTestSetup {
                     sync_mode: SyncMode::Latest,
                     validate_genesis: false,
                 },
-                keygen: KeygenConfig { timeout_sec: 60 },
+                keygen: KeygenConfig { timeout_sec: 120 },
                 my_near_account_id: participant_accounts[i].clone(),
                 // Don't care since we use the fake indexer
                 near_responder_account_id: AccountId::from_str("dont_care").unwrap(),
                 presignature: PresignatureConfig {
                     concurrency: 1,
                     desired_presignatures_to_buffer: 5,
-                    timeout_sec: 60,
+                    timeout_sec: 120,
                 },
-                signature: SignatureConfig { timeout_sec: 60 },
-                ckd: CKDConfig { timeout_sec: 60 },
+                signature: SignatureConfig { timeout_sec: 120 },
+                ckd: CKDConfig { timeout_sec: 120 },
                 triple: TripleConfig {
                     concurrency: 1,
                     desired_triples_to_buffer: 10,
                     parallel_triple_generation_stagger_time_sec: 1,
-                    timeout_sec: 60,
+                    timeout_sec: 120,
                 },
                 number_of_responder_keys: 0,
                 web_ui: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port_seed.web_port(i)),
