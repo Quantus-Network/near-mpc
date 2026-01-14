@@ -57,6 +57,10 @@ impl IntoContractType<near_sdk::PublicKey> for &dtos::PublicKey {
                 // This conversion is not possible
                 unreachable!()
             }
+            dtos::PublicKey::Dilithium(_dilithium_public_key) => {
+                // NEAR SDK doesn't have a Dilithium curve type
+                unreachable!()
+            }
         }
     }
 }

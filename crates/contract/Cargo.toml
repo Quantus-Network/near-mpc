@@ -105,3 +105,4 @@ test-utils = { workspace = true }
 threshold-signatures = { workspace = true }
 tokio = { workspace = true }
 zstd = { workspace = true }
+qp-rusty-crystals-threshold = { workspace = true }

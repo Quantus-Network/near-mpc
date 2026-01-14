@@ -113,6 +113,7 @@ pub async fn init_with_candidates(
                     dtos::PublicKey::Ed25519(_) => SignatureScheme::Ed25519,
                     dtos::PublicKey::Secp256k1(_) => SignatureScheme::Secp256k1,
                     dtos::PublicKey::Bls12381(_) => SignatureScheme::Bls12381,
+                    dtos::PublicKey::Dilithium(_) => SignatureScheme::Dilithium,
                 };
                 let key: PublicKeyExtended = pk.try_into().unwrap();
                 ret_domains.push(DomainPublicKey {

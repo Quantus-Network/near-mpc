@@ -4843,6 +4843,7 @@ dependencies = [
  "near-account-id 2.0.0",
  "near-sdk",
  "near-workspaces",
+ "qp-rusty-crystals-threshold",
  "rand 0.8.5",
  "rand_core 0.6.4",
  "rstest",

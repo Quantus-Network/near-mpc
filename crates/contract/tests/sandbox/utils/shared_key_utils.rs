@@ -71,6 +71,13 @@ pub fn make_key_for_domain(domain_scheme: SignatureScheme) -> (dtos::PublicKey, 
             let (pk, sk) = new_bls12381();
             (pk, SharedSecretKey::Bls12381(sk))
         }
+        SignatureScheme::Dilithium => {
+            // Dilithium is not yet supported in sandbox tests
+            // Return a dummy Ed25519 key for now - actual Dilithium tests
+            // should be run via the node integration tests
+            let (pk, sk) = new_ed25519();
+            (pk, SharedSecretKey::Ed25519(sk))
+        }
     }
 }
 

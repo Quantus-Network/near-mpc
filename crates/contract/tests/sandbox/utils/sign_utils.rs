@@ -369,7 +369,8 @@ pub async fn make_and_submit_requests(
         match key.domain_config.scheme {
             SignatureScheme::Secp256k1
             | SignatureScheme::Ed25519
-            | SignatureScheme::V2Secp256k1 => {
+            | SignatureScheme::V2Secp256k1
+            | SignatureScheme::Dilithium => {
                 for message in &signature_request_payloads {
                     let req = SignRequestTest::new(key, &alice_id, message, path);
                     let transaction = submit_sign_request(&alice, &req.args, contract)
