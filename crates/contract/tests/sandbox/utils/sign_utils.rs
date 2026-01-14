@@ -1,8 +1,9 @@
 use super::consts::DEFAULT_MAX_TIMEOUT_TX_INCLUDED;
+
 use super::interface::{IntoContractType, IntoInterfaceType};
 use super::shared_key_utils::{
     derive_secret_key_ed25519, derive_secret_key_secp256k1, generate_random_app_public_key,
-    DomainKey, SharedSecretKey,
+    sign_with_dilithium, DomainKey, DilithiumKeygenOutput, SharedSecretKey,
 };
 use contract_interface::types::{self as dtos};
 use digest::{Digest, FixedOutput};
@@ -75,6 +76,9 @@ impl SignRequestTest {
             SharedSecretKey::Bls12381(_) => {
                 // todo: make SignRequestTest an enum
                 unreachable!()
+            }
+            SharedSecretKey::Dilithium(sk) => {
+                create_response_dilithium(domain_id, predecessor_id, msg, path, sk)
             }
         };
         let args = SignRequestArgs {
@@ -516,6 +520,38 @@ pub fn process_message(msg: &str) -> (impl Digest, Payload) {
 
     let payload_hash = Payload::from_legacy_ecdsa(bytes.into());
     (digest, payload_hash)
+}
+
+/// Create a Dilithium signature response for sandbox tests.
+///
+/// Note: For sandbox tests, we use the base dilithium crate directly
+/// since we don't have the full threshold MPC infrastructure here.
+/// The actual threshold signature verification happens in the node integration tests.
+pub fn create_response_dilithium(
+    domain_id: DomainId,
+    predecessor_id: &AccountId,
+    msg: &str,
+    path: &str,
+    keygen_output: &DilithiumKeygenOutput,
+) -> (Payload, SignatureRequest, SignatureResponse) {
+    // For Dilithium, we use the raw message bytes (similar to EdDSA)
+    let payload: [u8; 32] = {
+        let mut hasher = Sha256::new();
+        hasher.update(msg);
+        hasher.finalize().into()
+    };
+
+    let bytes = Bytes::new(payload.into()).unwrap();
+    let payload = Payload::Eddsa(bytes);
+
+    let respond_req = SignatureRequest::new(domain_id, payload.clone(), predecessor_id, path);
+
+    // Sign with the base dilithium crate (simulates what MPC network would produce)
+    let signature = sign_with_dilithium(keygen_output, msg.as_bytes());
+
+    let signature_response = SignatureResponse::Dilithium { signature };
+
+    (payload, respond_req, signature_response)
 }
 
 pub struct PendingSignRequest {

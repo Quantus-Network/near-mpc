@@ -1,5 +1,6 @@
 pub mod ckd;
 pub mod contract_configuration;
+pub mod dilithium;
 pub mod sign;
 pub mod tee;
 pub mod tee_cleanup_after_resharing;
