@@ -106,3 +106,4 @@ threshold-signatures = { workspace = true }
 tokio = { workspace = true }
 zstd = { workspace = true }
 qp-rusty-crystals-threshold = { workspace = true }
+qp-rusty-crystals-dilithium = { workspace = true }
