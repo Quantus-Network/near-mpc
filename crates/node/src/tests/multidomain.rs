@@ -46,6 +46,11 @@ async fn test_basic_multidomain() {
             id: DomainId(2),
             scheme: SignatureScheme::Bls12381,
         },
+        // Dilithium (ML-DSA-87) - post-quantum threshold signatures
+        DomainConfig {
+            id: DomainId(3),
+            scheme: SignatureScheme::Dilithium,
+        },
     ];
 
     {
@@ -99,16 +104,21 @@ async fn test_basic_multidomain() {
     }
     let new_domains = vec![
         DomainConfig {
-            id: DomainId(3),
+            id: DomainId(4),
             scheme: SignatureScheme::Ed25519,
         },
         DomainConfig {
-            id: DomainId(4),
+            id: DomainId(5),
             scheme: SignatureScheme::Secp256k1,
         },
         DomainConfig {
-            id: DomainId(5),
+            id: DomainId(6),
             scheme: SignatureScheme::Bls12381,
+        },
+        // Add another Dilithium domain to test adding domains after initialization
+        DomainConfig {
+            id: DomainId(7),
+            scheme: SignatureScheme::Dilithium,
         },
     ];
 

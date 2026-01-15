@@ -3,9 +3,14 @@
 //! This module provides the DKG functionality for threshold Dilithium (ML-DSA-87)
 //! keys, wrapping the `qp-rusty-crystals-threshold` DKG protocol in a
 //! cait-sith compatible Protocol trait implementation.
+//!
+//! The threshold library now handles arbitrary participant IDs internally via
+//! ParticipantList, so this adapter simply converts between NEAR's Participant
+//! type and our ParticipantId (u32).
 
 use crate::network::computation::MpcLeaderCentricComputation;
 use crate::network::NetworkTaskChannel;
+use crate::primitives::ParticipantId;
 use crate::protocol::run_protocol;
 use crate::providers::dilithium::{DilithiumKeygenOutput, DilithiumSignatureProvider};
 use threshold_signatures::participants::Participant;
@@ -47,21 +52,31 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for DilithiumKeyGenerati
         self,
         channel: &mut NetworkTaskChannel,
     ) -> anyhow::Result<DilithiumKeygenOutput> {
-        let participants: Vec<u8> = channel
-            .participants()
-            .iter()
-            .map(|p| p.raw() as u8)
-            .collect();
+        // Get all participants from the channel - use raw NEAR IDs directly
+        // The threshold library now handles arbitrary IDs via ParticipantList
+        let near_participants: Vec<ParticipantId> = channel.participants().to_vec();
+        let my_near_id: ParticipantId = channel.my_participant_id();
+        let total_parties = near_participants.len();
 
-        let my_participant_id = channel.my_participant_id().raw() as u8;
-        let total_parties = participants.len() as u8;
+        // Convert NEAR ParticipantIds to raw u32 values for the threshold library
+        let participant_ids: Vec<u32> = near_participants.iter().map(|p| p.raw()).collect();
+        let my_id = my_near_id.raw();
+
+        tracing::debug!(
+            "Dilithium DKG: my_id={}, total_parties={}, threshold={}, participants={:?}",
+            my_id,
+            total_parties,
+            self.threshold,
+            participant_ids
+        );
 
         // Create threshold config
-        let threshold_config = ThresholdConfig::new(self.threshold as u8, total_parties)
+        let threshold_config = ThresholdConfig::new(self.threshold as u32, total_parties as u32)
             .map_err(|e| anyhow::anyhow!("Failed to create threshold config: {:?}", e))?;
 
-        // Create DKG config
-        let dkg_config = DkgConfig::new(threshold_config, my_participant_id, participants.clone())
+        // Create DKG config with NEAR participant IDs directly
+        // The threshold library handles ID-to-index mapping internally via ParticipantList
+        let dkg_config = DkgConfig::new(threshold_config, my_id, participant_ids)
             .map_err(|e| anyhow::anyhow!("Failed to create DKG config: {}", e))?;
 
         // Generate random seed for this party
@@ -73,6 +88,7 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for DilithiumKeyGenerati
         let dkg = DilithiumDkg::new(dkg_config, seed);
 
         // Wrap in cait-sith compatible adapter
+        // The adapter only converts between NEAR's Participant type and our u32 IDs
         let adapter = DilithiumDkgAdapter::new(dkg);
 
         // Run the protocol
@@ -90,6 +106,10 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for DilithiumKeyGenerati
 }
 
 /// Adapter that wraps DilithiumDkg to implement the cait-sith Protocol trait.
+///
+/// This adapter converts between NEAR's cait-sith Participant type and our
+/// ParticipantId (u32). The threshold library handles arbitrary participant IDs
+/// internally via ParticipantList, so no ID-to-index mapping is needed here.
 pub struct DilithiumDkgAdapter {
     inner: DilithiumDkg,
 }
@@ -103,13 +123,17 @@ impl DilithiumDkgAdapter {
 impl Protocol for DilithiumDkgAdapter {
     type Output = DkgOutput;
 
-    fn poke(&mut self) -> Result<Action<Self::Output>, threshold_signatures::errors::ProtocolError> {
+    fn poke(
+        &mut self,
+    ) -> Result<Action<Self::Output>, threshold_signatures::errors::ProtocolError> {
         match self.inner.poke() {
             Ok(action) => match action {
                 DkgAction::Wait => Ok(Action::Wait),
                 DkgAction::SendMany(data) => Ok(Action::SendMany(data)),
-                DkgAction::SendPrivate(to, data) => {
-                    Ok(Action::SendPrivate(Participant::from(to as u32), data))
+                DkgAction::SendPrivate(to_id, data) => {
+                    // Convert our ParticipantId (u32) to cait-sith Participant
+                    let participant: Participant = Participant::from(to_id);
+                    Ok(Action::SendPrivate(participant, data))
                 }
                 DkgAction::Return(output) => Ok(Action::Return(output)),
             },
@@ -120,9 +144,9 @@ impl Protocol for DilithiumDkgAdapter {
     }
 
     fn message(&mut self, from: Participant, data: threshold_signatures::protocol::MessageData) {
-        // Convert cait-sith Participant to our u8 participant ID
+        // Convert cait-sith Participant to our ParticipantId (u32)
         let from_id: u32 = from.into();
-        self.inner.message(from_id as u8, data);
+        self.inner.message(from_id, data);
     }
 }
 
@@ -132,12 +156,39 @@ mod tests {
 
     #[test]
     fn test_dilithium_dkg_adapter_creation() {
-        // This test verifies the basic setup works
-        // Full integration tests would require the complete MPC infrastructure
+        // This test verifies the basic setup works with arbitrary NEAR-style IDs
+        // The threshold library handles ID-to-index mapping internally
         let threshold_config = ThresholdConfig::new(2, 3).unwrap();
-        let dkg_config = DkgConfig::new(threshold_config, 0, vec![0, 1, 2]).unwrap();
+        // Use arbitrary IDs like NEAR would
+        let dkg_config = DkgConfig::new(
+            threshold_config,
+            524342676,
+            vec![524342676, 1313390130, 3526595269],
+        )
+        .unwrap();
         let seed = [42u8; 32];
         let dkg = DilithiumDkg::new(dkg_config, seed);
+
         let _adapter = DilithiumDkgAdapter::new(dkg);
+    }
+
+    #[test]
+    fn test_arbitrary_participant_ids() {
+        // Test that large NEAR-style IDs work directly without mapping
+        let near_ids: Vec<u32> = vec![524342676, 1313390130, 3526595269, 3731869668];
+
+        // The threshold library's ParticipantList handles these directly
+        let participant_list =
+            qp_rusty_crystals_threshold::ParticipantList::new(&near_ids).unwrap();
+
+        // Verify the list contains all IDs
+        assert_eq!(participant_list.len(), 4);
+        for &id in &near_ids {
+            assert!(participant_list.contains(id));
+        }
+
+        // Indices are assigned based on sorted order
+        assert_eq!(participant_list.index_of(524342676), Some(0)); // smallest
+        assert_eq!(participant_list.index_of(3731869668), Some(3)); // largest
     }
 }

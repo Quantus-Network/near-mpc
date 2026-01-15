@@ -3,9 +3,14 @@
 //! This module provides the signing functionality for threshold Dilithium (ML-DSA-87)
 //! signatures, wrapping the `qp-rusty-crystals-threshold` signing protocol in a
 //! cait-sith compatible Protocol trait implementation.
+//!
+//! The threshold library now handles arbitrary participant IDs internally via
+//! ParticipantList, so this adapter simply converts between NEAR's Participant
+//! type and our ParticipantId (u32).
 
 use crate::network::computation::MpcLeaderCentricComputation;
 use crate::network::NetworkTaskChannel;
+use crate::primitives::ParticipantId;
 use crate::protocol::run_protocol;
 use crate::providers::dilithium::{
     DilithiumKeygenOutput, DilithiumPublicKey, DilithiumSignature, DilithiumSignatureProvider,
@@ -13,6 +18,7 @@ use crate::providers::dilithium::{
 };
 use crate::types::SignatureId;
 use anyhow::Context;
+
 use std::time::Duration;
 use threshold_signatures::participants::Participant;
 use threshold_signatures::protocol::{Action, Protocol};
@@ -32,6 +38,7 @@ impl DilithiumSignatureProvider {
     ) -> anyhow::Result<(DilithiumSignature, DilithiumPublicKey)> {
         let sign_request = self.sign_request_store.get(id).await?;
 
+        // Select threshold number of parties for signing (subset signing is supported)
         let threshold = self.mpc_config.participants.threshold as usize;
         let running_participants: Vec<_> = self
             .mpc_config
@@ -58,12 +65,13 @@ impl DilithiumSignatureProvider {
         let message = sign_request
             .payload
             .as_eddsa()
-            .ok_or_else(|| anyhow::anyhow!("Signature request payload is not an EdDSA/Dilithium payload"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Signature request payload is not an EdDSA/Dilithium payload")
+            })?
             .to_vec();
 
         let result = DilithiumSignComputation {
             keygen_output: keygen_output.clone(),
-            threshold,
             message,
             context: vec![], // Empty context for now
         }
@@ -92,8 +100,6 @@ impl DilithiumSignatureProvider {
         )
         .await??;
 
-        let threshold = self.mpc_config.participants.threshold as usize;
-
         let Some(keygen_output) = self.keyshares.get(&sign_request.domain) else {
             anyhow::bail!("No keyshare for domain {:?}", sign_request.domain);
         };
@@ -101,12 +107,13 @@ impl DilithiumSignatureProvider {
         let message = sign_request
             .payload
             .as_eddsa()
-            .ok_or_else(|| anyhow::anyhow!("Signature request payload is not an EdDSA/Dilithium payload"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Signature request payload is not an EdDSA/Dilithium payload")
+            })?
             .to_vec();
 
         let _ = DilithiumSignComputation {
             keygen_output: keygen_output.clone(),
-            threshold,
             message,
             context: vec![],
         }
@@ -123,7 +130,6 @@ impl DilithiumSignatureProvider {
 /// Computation wrapper for Dilithium signing that implements MpcLeaderCentricComputation.
 pub struct DilithiumSignComputation {
     pub keygen_output: DilithiumKeygenOutput,
-    pub threshold: usize,
     pub message: Vec<u8>,
     pub context: Vec<u8>,
 }
@@ -134,20 +140,35 @@ impl MpcLeaderCentricComputation<Option<DilithiumSignature>> for DilithiumSignCo
         self,
         channel: &mut NetworkTaskChannel,
     ) -> anyhow::Result<Option<DilithiumSignature>> {
-        let participants: Vec<u8> = channel
-            .participants()
-            .iter()
-            .map(|p| p.raw() as u8)
-            .collect();
+        // Get participants from the channel - use raw NEAR IDs directly
+        // The threshold library now handles arbitrary IDs via ParticipantList
+        let near_participants: Vec<ParticipantId> = channel.participants().to_vec();
+        let my_near_id: ParticipantId = channel.my_participant_id();
+        let signing_party_count = near_participants.len();
 
-        let my_participant_id = channel.my_participant_id().raw() as u8;
-        let total_parties = participants.len() as u8;
+        // Get DKG parameters from the keyshare
+        let dkg_threshold = self.keygen_output.private_share.threshold();
 
-        // Create threshold config
-        let config = ThresholdConfig::new(self.threshold as u8, total_parties)
+        // Convert NEAR ParticipantIds to raw u32 values for the threshold library
+        let participant_ids: Vec<u32> = near_participants.iter().map(|p| p.raw()).collect();
+        let my_id = my_near_id.raw();
+
+        tracing::debug!(
+            "Dilithium signing: my_id={}, my_dkg_party_id={}, signing_parties={}, threshold={}, participants={:?}",
+            my_id,
+            self.keygen_output.private_share.party_id(),
+            signing_party_count,
+            dkg_threshold,
+            participant_ids
+        );
+
+        // Create threshold config for the signing session.
+        // With subset signing support, total_parties can be less than DKG total
+        // as long as it's >= threshold.
+        let config = ThresholdConfig::new(dkg_threshold, signing_party_count as u32)
             .map_err(|e| anyhow::anyhow!("Failed to create threshold config: {:?}", e))?;
 
-        // Create the threshold signer
+        // Create the threshold signer using the keyshare from DKG
         let signer = ThresholdSigner::new(
             self.keygen_output.private_share.clone(),
             self.keygen_output.public_key.clone(),
@@ -155,16 +176,13 @@ impl MpcLeaderCentricComputation<Option<DilithiumSignature>> for DilithiumSignCo
         )
         .map_err(|e| anyhow::anyhow!("Failed to create threshold signer: {:?}", e))?;
 
-        // Create the protocol adapter
-        let protocol = DilithiumSignProtocol::new(
-            signer,
-            self.message,
-            self.context,
-            participants,
-            my_participant_id,
-        );
+        // Create the signing protocol with NEAR participant IDs directly
+        // The threshold library handles ID-to-index mapping internally via ParticipantList
+        let protocol =
+            DilithiumSignProtocol::new(signer, self.message, self.context, participant_ids, my_id);
 
         // Wrap in cait-sith compatible adapter
+        // The adapter only converts between NEAR's Participant type and our u32 IDs
         let adapter = DilithiumProtocolAdapter::new(protocol);
 
         // Run the protocol
@@ -185,6 +203,10 @@ impl MpcLeaderCentricComputation<Option<DilithiumSignature>> for DilithiumSignCo
 }
 
 /// Adapter that wraps DilithiumSignProtocol to implement the cait-sith Protocol trait.
+///
+/// This adapter converts between NEAR's cait-sith Participant type and our
+/// ParticipantId (u32). The threshold library handles arbitrary participant IDs
+/// internally via ParticipantList, so no ID-to-index mapping is needed here.
 pub struct DilithiumProtocolAdapter {
     inner: DilithiumSignProtocol,
 }
@@ -198,7 +220,9 @@ impl DilithiumProtocolAdapter {
 impl Protocol for DilithiumProtocolAdapter {
     type Output = DilithiumSignature;
 
-    fn poke(&mut self) -> Result<Action<Self::Output>, threshold_signatures::errors::ProtocolError> {
+    fn poke(
+        &mut self,
+    ) -> Result<Action<Self::Output>, threshold_signatures::errors::ProtocolError> {
         match self.inner.poke() {
             Ok(action) => match action {
                 DilithiumAction::Wait => Ok(Action::Wait),
@@ -212,9 +236,9 @@ impl Protocol for DilithiumProtocolAdapter {
     }
 
     fn message(&mut self, from: Participant, data: threshold_signatures::protocol::MessageData) {
-        // Convert cait-sith Participant to our u8 participant ID
+        // Convert cait-sith Participant to our ParticipantId (u32)
         let from_id: u32 = from.into();
-        self.inner.message(from_id as u8, data);
+        self.inner.message(from_id, data);
     }
 }
 
@@ -223,8 +247,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_dilithium_protocol_adapter_creation() {
-        // This test verifies the adapter can be created
-        // Full integration tests would require setting up the full MPC infrastructure
+    fn test_arbitrary_participant_ids() {
+        // Test that large NEAR-style IDs work directly without mapping
+        let near_ids: Vec<u32> = vec![524342676, 1313390130, 3526595269, 3731869668];
+
+        // The threshold library's ParticipantList handles these directly
+        let participant_list =
+            qp_rusty_crystals_threshold::ParticipantList::new(&near_ids).unwrap();
+
+        // Verify the list contains all IDs
+        assert_eq!(participant_list.len(), 4);
+        for &id in &near_ids {
+            assert!(participant_list.contains(id));
+        }
+
+        // Indices are assigned based on sorted order
+        assert_eq!(participant_list.index_of(524342676), Some(0)); // smallest
+        assert_eq!(participant_list.index_of(3731869668), Some(3)); // largest
+    }
+
+    #[test]
+    fn test_subset_signing_with_arbitrary_ids() {
+        // Test subset signing with arbitrary NEAR-style IDs
+        // Original DKG had NEAR IDs: [100, 200, 300, 400]
+        // Signing with subset: [100, 200, 400] (skipping 300)
+
+        let signing_ids: Vec<u32> = vec![100, 200, 400];
+
+        // The threshold library handles these directly via ParticipantList
+        let participant_list =
+            qp_rusty_crystals_threshold::ParticipantList::new(&signing_ids).unwrap();
+
+        // Verify subset is properly handled
+        assert_eq!(participant_list.len(), 3);
+        assert!(participant_list.contains(100));
+        assert!(participant_list.contains(200));
+        assert!(participant_list.contains(400));
+        assert!(!participant_list.contains(300)); // not in signing set
     }
 }
