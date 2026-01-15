@@ -21,6 +21,7 @@ use super::DEFAULT_BLOCK_TIME;
 #[case(1, SignatureScheme::Ed25519, 3)]
 #[case(2, SignatureScheme::Bls12381, 3)]
 #[case(3, SignatureScheme::V2Secp256k1, 5)]
+#[case(4, SignatureScheme::Dilithium, 2)]
 async fn test_key_resharing_simple(
     #[case] case: u16,
     #[case] scheme: SignatureScheme,
@@ -74,7 +75,10 @@ async fn test_key_resharing_simple(
 
     // Sanity check.
     match domain.scheme {
-        SignatureScheme::Secp256k1 | SignatureScheme::Ed25519 | SignatureScheme::V2Secp256k1 | SignatureScheme::Dilithium => {
+        SignatureScheme::Secp256k1
+        | SignatureScheme::Ed25519
+        | SignatureScheme::V2Secp256k1
+        | SignatureScheme::Dilithium => {
             assert!(request_signature_and_await_response(
                 &mut setup.indexer,
                 "user1",
@@ -118,7 +122,10 @@ async fn test_key_resharing_simple(
         .expect("Timeout waiting for resharing to complete");
 
     match domain.scheme {
-        SignatureScheme::Secp256k1 | SignatureScheme::Ed25519 | SignatureScheme::V2Secp256k1 | SignatureScheme::Dilithium => {
+        SignatureScheme::Secp256k1
+        | SignatureScheme::Ed25519
+        | SignatureScheme::V2Secp256k1
+        | SignatureScheme::Dilithium => {
             assert!(request_signature_and_await_response(
                 &mut setup.indexer,
                 "user1",

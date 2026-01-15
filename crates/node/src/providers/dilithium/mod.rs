@@ -4,6 +4,7 @@
 //! `qp-rusty-crystals-threshold` crate.
 
 mod key_generation;
+mod key_resharing;
 mod sign;
 
 use crate::config::{ConfigFile, MpcConfig, ParticipantsConfig};
@@ -98,15 +99,20 @@ impl SignatureProvider for DilithiumSignatureProvider {
     }
 
     async fn run_key_resharing_client(
-        _new_threshold: usize,
-        _key_share: Option<PrivateKeyShare>,
-        _public_key: DilithiumPublicKey,
-        _old_participants: &ParticipantsConfig,
-        _channel: NetworkTaskChannel,
+        new_threshold: usize,
+        key_share: Option<PrivateKeyShare>,
+        public_key: DilithiumPublicKey,
+        old_participants: &ParticipantsConfig,
+        channel: NetworkTaskChannel,
     ) -> anyhow::Result<Self::KeygenOutput> {
-        // TODO: Implement key resharing for Dilithium
-        // This requires extending qp-rusty-crystals-threshold with resharing support
-        anyhow::bail!("Dilithium key resharing not yet implemented")
+        Self::run_key_resharing_client_internal(
+            new_threshold,
+            key_share,
+            public_key,
+            old_participants,
+            channel,
+        )
+        .await
     }
 
     async fn process_channel(&self, channel: NetworkTaskChannel) -> anyhow::Result<()> {
@@ -160,11 +166,8 @@ mod tests {
         use mpc_contract::primitives::domain::DomainId;
         use mpc_contract::primitives::key_state::{AttemptId, EpochId, KeyEventId};
 
-        let key_event = KeyEventId::new(
-            EpochId::new(1),
-            DomainId(5),
-            AttemptId::legacy_attempt_id(),
-        );
+        let key_event =
+            KeyEventId::new(EpochId::new(1), DomainId(5), AttemptId::legacy_attempt_id());
         let task_id = DilithiumTaskId::KeyGeneration { key_event };
 
         // Test serialization round-trip
