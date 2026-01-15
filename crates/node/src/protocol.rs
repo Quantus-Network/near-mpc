@@ -91,10 +91,18 @@ pub async fn run_protocol<T>(
                         }
                     }
                     Action::SendPrivate(participant, vec) => {
-                        messages_to_send
-                            .entry(From::from(participant))
-                            .or_insert(Vec::new())
-                            .push(vec.clone());
+                        let participant_id: ParticipantId = From::from(participant);
+                        if participant_id == my_participant_id {
+                            // Deliver self-messages directly to the protocol to avoid
+                            // deadlock where we wait for a message that's stuck in our
+                            // own outgoing queue.
+                            protocol.message(participant, vec);
+                        } else {
+                            messages_to_send
+                                .entry(participant_id)
+                                .or_insert(Vec::new())
+                                .push(vec);
+                        }
                     }
                     Action::Return(result) => {
                         // Warning: we cannot return immediately!! There may be some important
