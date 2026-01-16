@@ -7858,10 +7858,13 @@ name = "qp-rusty-crystals-threshold"
 version = "1.0.0"
 dependencies = [
  "bincode",
+ "hkdf",
  "qp-rusty-crystals-dilithium",
  "rand 0.8.5",
  "rand_core 0.6.4",
  "serde",
+ "sha2",
+ "sha3",
  "subtle",
  "thiserror 2.0.17",
  "zeroize",

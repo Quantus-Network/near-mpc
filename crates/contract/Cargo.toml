@@ -81,6 +81,8 @@ sha3 = { workspace = true }
 thiserror = { workspace = true }
 threshold-signatures = { workspace = true, optional = true }
 utilities = { workspace = true }
+# Dilithium signature verification
+qp-rusty-crystals-dilithium = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { workspace = true, features = ["custom"] }
