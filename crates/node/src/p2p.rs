@@ -543,7 +543,7 @@ pub mod testing {
         // The base port number used, hoping the OS is not using ports in this range
         pub const BASE_PORT: u16 = 10000;
         // This constant must be equal to the total number of ports defined below
-        pub const TOTAL_DEFINED_PORTS: u16 = 19;
+        pub const TOTAL_DEFINED_PORTS: u16 = 26;
         // Maximum number of nodes that can be handled without port collisions
         pub const MAX_NODES: u16 = 10;
         // Maximum number of cases that can be handled without port collisions
@@ -614,6 +614,14 @@ pub mod testing {
         pub const MIGRATION_WEBSERVER_CHANGE_MIGRATION_INFO: Self = Self::new(16);
         pub const BACKUP_CLI_WEBSERVER_GET_KEYSHARES: Self = Self::new(17);
         pub const BACKUP_CLI_WEBSERVER_PUT_KEYSHARES: Self = Self::new(18);
+        // Dilithium key registration end-to-end tests
+        pub const DILITHIUM_KEY_REGISTRATION_TEST: Self = Self::new(19);
+        pub const DILITHIUM_MULTIPLE_KEYS_TEST: Self = Self::new(20);
+        pub const DILITHIUM_DIFFERENT_USERS_TEST: Self = Self::new(21);
+        pub const DILITHIUM_SIGN_WITHOUT_REGISTRATION_TEST: Self = Self::new(22);
+        pub const DILITHIUM_NODE_RESTART_TEST: Self = Self::new(23);
+        pub const DILITHIUM_MIXED_DOMAINS_TEST: Self = Self::new(24);
+        pub const DILITHIUM_CONCURRENT_REGISTRATIONS_TEST: Self = Self::new(25);
     }
 
     pub fn generate_test_p2p_configs(

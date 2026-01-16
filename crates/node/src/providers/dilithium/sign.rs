@@ -7,14 +7,25 @@
 //! The threshold library now handles arbitrary participant IDs internally via
 //! ParticipantList, so this adapter simply converts between NEAR's Participant
 //! type and our ParticipantId (u32).
+//!
+//! ## Derived Keys
+//!
+//! For Dilithium, users MUST register derived keys via `register_dilithium_key`
+//! before signing. Unlike ECC schemes where derivation is linear and can be done
+//! on-the-fly (derived_share = master_share + tweak), Dilithium derivation is NOT
+//! linear and requires a full DKG for each derived key.
+//!
+//! This means:
+//! - ECC: Tweak can be applied during signing; no pre-registration needed
+//! - Dilithium: Derived share must be pre-generated via DKG; signing fails without it
 
 use crate::network::computation::MpcLeaderCentricComputation;
 use crate::network::NetworkTaskChannel;
 use crate::primitives::ParticipantId;
 use crate::protocol::run_protocol;
 use crate::providers::dilithium::{
-    DilithiumKeygenOutput, DilithiumPublicKey, DilithiumSignature, DilithiumSignatureProvider,
-    DilithiumTaskId,
+    DerivedKeyId, DilithiumKeygenOutput, DilithiumPublicKey, DilithiumSignature,
+    DilithiumSignatureProvider, DilithiumTaskId,
 };
 use crate::types::SignatureId;
 use anyhow::Context;
@@ -57,9 +68,34 @@ impl DilithiumSignatureProvider {
             .client
             .new_channel_for_task(DilithiumTaskId::Signature { id }, participants.clone())?;
 
-        let Some(keygen_output) = self.keyshares.get(&sign_request.domain).cloned() else {
-            anyhow::bail!("No keyshare for domain {:?}", sign_request.domain);
+        // Check if we have a derived share for this (domain, tweak) combination.
+        // Derived shares are created when users call register_dilithium_key.
+        //
+        // IMPORTANT: Unlike ECC schemes where derivation is linear (derived_share = master_share + tweak),
+        // Dilithium requires a full DKG for each derived key. There is no algebraic relationship
+        // that allows us to derive a share on-the-fly from the master share.
+        //
+        // Therefore, if no derived share exists, we MUST fail rather than falling back to
+        // the master share. Using the master share would produce a signature that doesn't
+        // match the expected derived public key.
+        let derived_key_id = DerivedKeyId {
+            domain_id: sign_request.domain,
+            tweak: sign_request.tweak.as_bytes(),
         };
+
+        let keygen_output = self.get_derived_share(&derived_key_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Dilithium derived share not found for domain {:?}. \
+                 Dilithium keys must be registered via register_dilithium_key before signing. \
+                 Unlike ECC, Dilithium derivation requires a full DKG and cannot be computed on-the-fly.",
+                sign_request.domain
+            )
+        })?;
+
+        tracing::debug!(
+            "Using derived share for domain {:?} with tweak",
+            sign_request.domain
+        );
 
         // Get message from payload (Dilithium uses EdDSA-style raw message payload)
         let message = sign_request
@@ -100,9 +136,28 @@ impl DilithiumSignatureProvider {
         )
         .await??;
 
-        let Some(keygen_output) = self.keyshares.get(&sign_request.domain) else {
-            anyhow::bail!("No keyshare for domain {:?}", sign_request.domain);
+        // Check for derived share - same logic as leader.
+        //
+        // IMPORTANT: Unlike ECC schemes where derivation is linear, Dilithium requires
+        // a full DKG for each derived key. We MUST fail if no derived share exists
+        // rather than falling back to the master share.
+        let derived_key_id = DerivedKeyId {
+            domain_id: sign_request.domain,
+            tweak: sign_request.tweak.as_bytes(),
         };
+
+        let keygen_output = self.get_derived_share(&derived_key_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Follower: Dilithium derived share not found for domain {:?}. \
+                 Dilithium keys must be registered via register_dilithium_key before signing.",
+                sign_request.domain
+            )
+        })?;
+
+        tracing::debug!(
+            "Follower using derived share for domain {:?}",
+            sign_request.domain
+        );
 
         let message = sign_request
             .payload
@@ -113,7 +168,7 @@ impl DilithiumSignatureProvider {
             .to_vec();
 
         let _ = DilithiumSignComputation {
-            keygen_output: keygen_output.clone(),
+            keygen_output,
             message,
             context: vec![],
         }

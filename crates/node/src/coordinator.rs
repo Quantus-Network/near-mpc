@@ -497,6 +497,12 @@ where
 
                 let sign_request_store = Arc::new(SignRequestStorage::new(secret_db.clone())?);
                 let ckd_request_store = Arc::new(CKDRequestStorage::new(secret_db.clone())?);
+                let dilithium_key_registration_store = Arc::new(
+                    crate::storage::DilithiumKeyRegistrationStorage::new(secret_db.clone())?,
+                );
+                let dilithium_derived_share_storage = Arc::new(
+                    crate::storage::DilithiumDerivedShareStorage::new(secret_db.clone())?,
+                );
 
                 let mut ecdsa_keyshares: HashMap<DomainId, ecdsa::KeygenOutput> = HashMap::new();
                 let mut robust_ecdsa_keyshares: HashMap<DomainId, ecdsa::KeygenOutput> =
@@ -578,6 +584,7 @@ where
                     network_client.clone(),
                     sign_request_store.clone(),
                     dilithium_keyshares,
+                    dilithium_derived_share_storage,
                 ));
 
                 let mpc_client = Arc::new(MpcClient::new(
@@ -585,6 +592,7 @@ where
                     network_client,
                     sign_request_store,
                     ckd_request_store,
+                    dilithium_key_registration_store,
                     ecdsa_signature_provider,
                     robust_ecdsa_signature_provider,
                     eddsa_signature_provider,

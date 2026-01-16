@@ -14,7 +14,10 @@ use crate::config::{
 use crate::coordinator::Coordinator;
 use crate::db::SecretDB;
 use crate::indexer::fake::FakeIndexerManager;
-use crate::indexer::handler::{CKDArgs, CKDRequestFromChain, SignArgs, SignatureRequestFromChain};
+use crate::indexer::handler::{
+    CKDArgs, CKDRequestFromChain, DilithiumKeyRegistrationFromChain, SignArgs,
+    SignatureRequestFromChain,
+};
 use crate::indexer::IndexerAPI;
 use crate::keyshare::{KeyStorageConfig, Keyshare};
 use crate::migration_service::spawn_recovery_server_and_run_onboarding;
@@ -41,6 +44,7 @@ pub mod common;
 
 mod basic_cluster;
 mod changing_participant_details;
+mod dilithium_key_registration;
 mod faulty;
 mod multidomain;
 mod onboarding;
@@ -262,6 +266,25 @@ pub async fn request_signature_and_await_response(
     domain: &DomainConfig,
     timeout_sec: std::time::Duration,
 ) -> Option<std::time::Duration> {
+    request_signature_and_await_response_with_path(
+        indexer,
+        user,
+        domain,
+        "m/44'/60'/0'/0/0",
+        timeout_sec,
+    )
+    .await
+}
+
+/// Request a signature with a specific derivation path.
+/// This is needed for Dilithium where the path must match the registered key's path.
+pub async fn request_signature_and_await_response_with_path(
+    indexer: &mut FakeIndexerManager,
+    user: &str,
+    domain: &DomainConfig,
+    path: &str,
+    timeout_sec: std::time::Duration,
+) -> Option<std::time::Duration> {
     let payload = match domain.scheme {
         SignatureScheme::Secp256k1 | SignatureScheme::V2Secp256k1 => {
             let mut payload = [0; 32];
@@ -291,7 +314,7 @@ pub async fn request_signature_and_await_response(
         timestamp_nanosec: rand::random(),
         request: SignArgs {
             domain_id: domain.id,
-            path: "m/44'/60'/0'/0/0".to_string(),
+            path: path.to_string(),
             payload,
         },
     };
@@ -418,6 +441,99 @@ pub async fn request_ckd_and_await_response(
             }
             Err(_) => {
                 tracing::info!("Timed out waiting for ckd response for user {}", user);
+                return None;
+            }
+        }
+    }
+}
+
+/// Request a Dilithium key registration from the indexer and wait for the response.
+/// This triggers DKG for the derived key.
+/// Returns the time taken to receive the response, or None if timed out.
+pub async fn request_dilithium_key_registration_and_await_response(
+    indexer: &mut FakeIndexerManager,
+    user: &str,
+    path: &str,
+    domain: &DomainConfig,
+    timeout_sec: std::time::Duration,
+) -> Option<std::time::Duration> {
+    assert_matches!(
+        domain.scheme,
+        SignatureScheme::Dilithium,
+        "`request_dilithium_key_registration_and_await_response` must be called with a Dilithium domain",
+    );
+
+    let predecessor_id: AccountId = user.parse().unwrap();
+    let tweak = mpc_contract::primitives::dilithium_derivation::derive_dilithium_tweak(
+        &predecessor_id,
+        path,
+    );
+
+    let request = DilithiumKeyRegistrationFromChain {
+        request_id: CryptoHash(rand::random()),
+        path: path.to_string(),
+        domain_id: domain.id,
+        predecessor_id: predecessor_id.clone(),
+        tweak,
+        entropy: rand::random(),
+        timestamp_nanosec: rand::random(),
+    };
+
+    tracing::info!(
+        "Sending Dilithium key registration request from user {}, path {}, domain {:?}",
+        user,
+        path,
+        domain.id
+    );
+    indexer.request_dilithium_key_registration(request.clone());
+    let start_time = std::time::Instant::now();
+
+    loop {
+        match timeout(timeout_sec, indexer.next_dilithium_key_response()).await {
+            Ok(response) => {
+                if response.registration.account_id != predecessor_id {
+                    tracing::info!(
+                        "Received registration response is not for the user we sent (user {})
+                         Expected {:?}, actual {:?}",
+                        user,
+                        predecessor_id,
+                        response.registration.account_id
+                    );
+                    continue;
+                }
+                if response.registration.path != path {
+                    tracing::info!(
+                        "Received registration response is not for the path we requested (user {})
+                         Expected {:?}, actual {:?}",
+                        user,
+                        path,
+                        response.registration.path
+                    );
+                    continue;
+                }
+                if response.registration.domain_id != domain.id {
+                    tracing::info!(
+                        "Received registration response is not for the domain we requested (user {})
+                         Expected {:?}, actual {:?}",
+                        user,
+                        domain.id,
+                        response.registration.domain_id
+                    );
+                    continue;
+                }
+                tracing::info!(
+                    "Got Dilithium key registration response for user {}, path {}",
+                    user,
+                    path
+                );
+                return Some(start_time.elapsed());
+            }
+            Err(_) => {
+                tracing::info!(
+                    "Timed out waiting for Dilithium key registration response for user {}, path {}",
+                    user,
+                    path
+                );
                 return None;
             }
         }

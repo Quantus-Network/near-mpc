@@ -104,6 +104,8 @@ async fn test_propose_update_config() {
         ckd_call_gas_attachment_requirement_tera_gas: 55,
         return_signature_and_clean_state_on_success_call_tera_gas: 66,
         return_ck_and_clean_state_on_success_call_tera_gas: 77,
+        dilithium_key_registration_gas_attachment_requirement_tera_gas: 20,
+        return_dilithium_key_and_store_call_tera_gas: 10,
         fail_on_timeout_tera_gas: 88,
         clean_tee_status_tera_gas: 99,
         cleanup_orphaned_node_migrations_tera_gas: 11,

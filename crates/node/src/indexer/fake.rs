@@ -1,8 +1,11 @@
-use super::handler::{ChainBlockUpdate, SignatureRequestFromChain};
+use super::handler::{
+    ChainBlockUpdate, DilithiumKeyRegistrationFromChain, SignatureRequestFromChain,
+};
 use super::migrations::ContractMigrationInfo;
 use super::participants::ContractState;
 use super::types::{
-    ChainSendTransactionRequest, ChainSignatureRespondArgs, ConcludeNodeMigrationArgs,
+    ChainDilithiumKeyRespondArgs, ChainSendTransactionRequest, ChainSignatureRespondArgs,
+    ConcludeNodeMigrationArgs,
 };
 use super::IndexerAPI;
 use crate::config::{self, ParticipantsConfig};
@@ -14,6 +17,7 @@ use crate::requests::recent_blocks_tracker::tests::TestBlockMaker;
 use crate::tests::common::MockTransactionSender;
 use crate::tracking::{AutoAbortTask, AutoAbortTaskCollection};
 use crate::types::CKDId;
+use crate::types::DilithiumKeyRegistrationId;
 use crate::types::SignatureId;
 use anyhow::Context;
 use contract_interface::types as dtos;
@@ -44,6 +48,24 @@ pub struct FakeMpcContractState {
     env: Environment,
     pub pending_signatures: BTreeMap<Payload, SignatureId>,
     pub pending_ckds: BTreeMap<dtos::CkdAppId, CKDId>,
+    /// Pending Dilithium key registrations: (account_id, path, domain_id) -> request_id
+    pub pending_dilithium_key_registrations: BTreeMap<
+        (
+            AccountId,
+            String,
+            mpc_contract::primitives::domain::DomainId,
+        ),
+        DilithiumKeyRegistrationId,
+    >,
+    /// Registered Dilithium derived keys: (account_id, path, domain_id) -> public_key
+    pub registered_dilithium_keys: BTreeMap<
+        (
+            AccountId,
+            String,
+            mpc_contract::primitives::domain::DomainId,
+        ),
+        dtos::DilithiumPublicKey,
+    >,
     pub migration_service: NodeMigrations,
 }
 
@@ -61,6 +83,8 @@ impl FakeMpcContractState {
             env,
             pending_signatures: BTreeMap::new(),
             pending_ckds: BTreeMap::new(),
+            pending_dilithium_key_registrations: BTreeMap::new(),
+            registered_dilithium_keys: BTreeMap::new(),
             migration_service: NodeMigrations::default(),
         }
     }
@@ -327,6 +351,9 @@ struct FakeIndexerCore {
     signature_request_receiver: mpsc::UnboundedReceiver<SignatureRequestFromChain>,
     /// Receives ckd requests from the FakeIndexerManager.
     ckd_request_receiver: mpsc::UnboundedReceiver<CKDRequestFromChain>,
+    /// Receives Dilithium key registration requests from the FakeIndexerManager.
+    dilithium_key_registration_request_receiver:
+        mpsc::UnboundedReceiver<DilithiumKeyRegistrationFromChain>,
     /// Broadcasts the contract state to each node.
     state_change_sender: broadcast::Sender<ContractState>,
     /// Broadcasts block updates to each node.
@@ -343,6 +370,10 @@ struct FakeIndexerCore {
     /// this sender. The receiver end of this is in FakeIndexManager to be received by the test
     /// code.
     ckd_response_sender: mpsc::UnboundedSender<ChainCKDRespondArgs>,
+
+    /// When the core receives Dilithium key registration response txns, it processes them by
+    /// sending them through this sender.
+    dilithium_key_response_sender: mpsc::UnboundedSender<ChainDilithiumKeyRespondArgs>,
 
     /// How long to wait before generating the next block.
     block_time: std::time::Duration,
@@ -458,12 +489,42 @@ impl FakeIndexerCore {
                     .insert(ckd_request.request.app_id.clone(), ckd_id);
             }
 
+            // Process Dilithium key registration requests
+            let mut dilithium_key_registrations = Vec::new();
+            loop {
+                match self.dilithium_key_registration_request_receiver.try_recv() {
+                    Ok(request) => {
+                        dilithium_key_registrations.push(request);
+                    }
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        return;
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        break;
+                    }
+                }
+            }
+
+            for registration in &dilithium_key_registrations {
+                let mut contract = contract.lock().await;
+                let key = (
+                    registration.predecessor_id.clone(),
+                    registration.path.clone(),
+                    registration.domain_id,
+                );
+                contract
+                    .pending_dilithium_key_registrations
+                    .insert(key, registration.request_id);
+            }
+
             let mut block_update = ChainBlockUpdate {
                 block: block.to_block_view(),
                 signature_requests,
                 completed_signatures: Vec::new(),
                 ckd_requests,
                 completed_ckds: Vec::new(),
+                dilithium_key_registrations,
+                completed_dilithium_key_registrations: Vec::new(),
             };
             contract.lock().await.env.set_block_height(block.height());
             for (txn, uid) in transactions_to_process {
@@ -533,6 +594,37 @@ impl FakeIndexerCore {
                         let mut contract = contract.lock().await;
                         contract.conclude_node_migration(account_id, conclude_migration_args);
                     }
+                    ChainSendTransactionRequest::DilithiumKeyRespond(respond) => {
+                        let mut contract = contract.lock().await;
+                        let key = (
+                            respond.registration.account_id.clone(),
+                            respond.registration.path.clone(),
+                            respond.registration.domain_id,
+                        );
+                        let request_id = contract.pending_dilithium_key_registrations.remove(&key);
+                        if let Some(request_id) = request_id {
+                            // Store the registered key
+                            contract
+                                .registered_dilithium_keys
+                                .insert(key, respond.response.public_key.clone());
+                            self.dilithium_key_response_sender
+                                .send(respond.clone())
+                                .unwrap();
+                            block_update
+                                .completed_dilithium_key_registrations
+                                .push(request_id);
+                            tracing::info!(
+                                "Dilithium key registration completed for account {:?}, path {:?}",
+                                respond.registration.account_id,
+                                respond.registration.path
+                            );
+                        } else {
+                            tracing::warn!(
+                                "Ignoring respond_dilithium_key for unknown registration: {:?}",
+                                respond.registration
+                            );
+                        }
+                    }
                 }
             }
             self.block_update_sender.send(block_update).ok();
@@ -569,6 +661,11 @@ pub struct FakeIndexerManager {
     ckd_response_receiver: mpsc::UnboundedReceiver<ChainCKDRespondArgs>,
     /// Used to send signature requests to the core.
     ckd_request_sender: mpsc::UnboundedSender<CKDRequestFromChain>,
+
+    /// Collects Dilithium key registration responses from the core.
+    dilithium_key_response_receiver: mpsc::UnboundedReceiver<ChainDilithiumKeyRespondArgs>,
+    /// Used to send Dilithium key registration requests to the core.
+    dilithium_key_request_sender: mpsc::UnboundedSender<DilithiumKeyRegistrationFromChain>,
 
     /// Allows nodes to be disabled during tests. See `disable()`.
     node_disabler: HashMap<TestNodeUid, NodeDisabler>,
@@ -684,7 +781,10 @@ impl FakeIndexerOneNode {
         let shutdown_clone = shutdown.clone();
         let monitor_state_changes = AutoAbortTask::from(tokio::spawn(async move {
             loop {
-                let state = core_state_change_receiver.recv().await.unwrap();
+                let Ok(state) = core_state_change_receiver.recv().await else {
+                    // Core shut down, exit gracefully
+                    break;
+                };
                 let state = if shutdown_clone.load(std::sync::atomic::Ordering::Relaxed) {
                     ContractState::Invalid
                 } else {
@@ -706,7 +806,10 @@ impl FakeIndexerOneNode {
         }));
         let monitor_migration_state_changes = AutoAbortTask::from(tokio::spawn(async move {
             loop {
-                let state = core_migration_change_receiver.recv().await.unwrap();
+                let Ok(state) = core_migration_change_receiver.recv().await else {
+                    // Core shut down, exit gracefully
+                    break;
+                };
                 let state =
                     MigrationInfo::from_contract_state(&account_id, &p2p_public_key, &state);
 
@@ -725,24 +828,39 @@ impl FakeIndexerOneNode {
         }));
         let monitor_requests = AutoAbortTask::from(tokio::spawn(async move {
             loop {
-                let request = block_update_receiver.recv().await.unwrap();
-                indexer_suspended
+                let Ok(request) = block_update_receiver.recv().await else {
+                    // Core shut down, exit gracefully
+                    break;
+                };
+                if indexer_suspended
                     .wait_for(|suspended| !suspended)
                     .await
-                    .unwrap();
-                api_block_update_sender.send(request).unwrap();
+                    .is_err()
+                {
+                    // Sender dropped, exit gracefully
+                    break;
+                }
+                if api_block_update_sender.send(request).is_err() {
+                    // Receiver dropped (coordinator shut down), exit gracefully
+                    break;
+                }
             }
         }));
         let forward_txn_requests = AutoAbortTask::from(tokio::spawn(async move {
             while let Some(txn) = api_txn_receiver.recv().await {
-                core_txn_sender.send((txn, uid)).unwrap();
+                if core_txn_sender.send((txn, uid)).is_err() {
+                    // Core shut down, exit gracefully
+                    break;
+                }
             }
         }));
 
-        monitor_state_changes.await.unwrap();
-        monitor_migration_state_changes.await.unwrap();
-        monitor_requests.await.unwrap();
-        forward_txn_requests.await.unwrap();
+        // Wait for all tasks to complete; ignore errors since tasks may exit
+        // gracefully when channels close during shutdown
+        let _ = monitor_state_changes.await;
+        let _ = monitor_migration_state_changes.await;
+        let _ = monitor_requests.await;
+        let _ = forward_txn_requests.await;
     }
 }
 
@@ -757,6 +875,10 @@ impl FakeIndexerManager {
         let (signature_response_sender, signature_response_receiver) = mpsc::unbounded_channel();
         let (ckd_request_sender, ckd_request_receiver) = mpsc::unbounded_channel();
         let (ckd_response_sender, ckd_response_receiver) = mpsc::unbounded_channel();
+        let (dilithium_key_request_sender, dilithium_key_request_receiver) =
+            mpsc::unbounded_channel();
+        let (dilithium_key_response_sender, dilithium_key_response_receiver) =
+            mpsc::unbounded_channel();
         let contract = Arc::new(tokio::sync::Mutex::new(FakeMpcContractState::new()));
         let account_id_by_uid = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let core = FakeIndexerCore {
@@ -764,6 +886,7 @@ impl FakeIndexerManager {
             txn_delay_blocks,
             signature_request_receiver,
             ckd_request_receiver,
+            dilithium_key_registration_request_receiver: dilithium_key_request_receiver,
             contract: contract.clone(),
             txn_receiver,
             state_change_sender: state_change_sender.clone(),
@@ -771,6 +894,7 @@ impl FakeIndexerManager {
             migration_change_sender: migration_change_sender.clone(),
             signature_response_sender,
             ckd_response_sender,
+            dilithium_key_response_sender,
             block_time,
             account_id_by_uid: account_id_by_uid.clone(),
         };
@@ -783,8 +907,10 @@ impl FakeIndexerManager {
             _core_task: core_task,
             signature_response_receiver,
             ckd_response_receiver,
+            dilithium_key_response_receiver,
             signature_request_sender,
             ckd_request_sender,
+            dilithium_key_request_sender,
             node_disabler: HashMap::new(),
             indexer_pauser: HashMap::new(),
             contract,
@@ -810,6 +936,31 @@ impl FakeIndexerManager {
     /// Sends a ckd request to the fake blockchain.
     pub fn request_ckd(&self, request: CKDRequestFromChain) {
         self.ckd_request_sender.send(request).unwrap();
+    }
+
+    /// Sends a Dilithium key registration request to the fake blockchain.
+    pub fn request_dilithium_key_registration(&self, request: DilithiumKeyRegistrationFromChain) {
+        self.dilithium_key_request_sender.send(request).unwrap();
+    }
+
+    /// Waits for the next Dilithium key registration response submitted by any node.
+    pub async fn next_dilithium_key_response(&mut self) -> ChainDilithiumKeyRespondArgs {
+        self.dilithium_key_response_receiver.recv().await.unwrap()
+    }
+
+    /// Checks if a Dilithium derived key is registered for the given account, path, and domain.
+    pub async fn is_dilithium_key_registered(
+        &self,
+        account_id: &AccountId,
+        path: &str,
+        domain_id: mpc_contract::primitives::domain::DomainId,
+    ) -> bool {
+        let contract = self.contract.lock().await;
+        contract.registered_dilithium_keys.contains_key(&(
+            account_id.clone(),
+            path.to_string(),
+            domain_id,
+        ))
     }
 
     /// Adds a new node to the fake indexer. Returns the API for the node, a task that
@@ -914,6 +1065,15 @@ impl FakeIndexerManager {
         f: impl Fn(&ContractMigrationInfo) -> bool,
         timeout_duration: tokio::time::Duration,
     ) -> anyhow::Result<()> {
+        // Check current state first to avoid race condition where state changed
+        // before we subscribed to the broadcast channel
+        {
+            let current_state = self.contract.lock().await;
+            let migration_state = current_state.migration_service.get_all();
+            if f(&migration_state) {
+                return Ok(());
+            }
+        }
         let state_change_receiver = self.core_migration_change_sender.subscribe();
         FakeIndexerManager::wait_for_state(state_change_receiver, f, timeout_duration).await
     }
@@ -924,6 +1084,20 @@ impl FakeIndexerManager {
         f: impl Fn(&ContractState) -> bool,
         timeout_duration: tokio::time::Duration,
     ) -> anyhow::Result<()> {
+        // Check current state first to avoid race condition where state changed
+        // before we subscribed to the broadcast channel
+        {
+            let contract = self.contract.lock().await;
+            let current_state = ContractState::from_contract_state(
+                &contract.state,
+                contract.env.block_height,
+                None,
+            )
+            .expect("Failed to convert contract state");
+            if f(&current_state) {
+                return Ok(());
+            }
+        }
         let state_change_receiver = self.core_state_change_sender.subscribe();
         FakeIndexerManager::wait_for_state(state_change_receiver, f, timeout_duration).await
     }

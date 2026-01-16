@@ -89,6 +89,8 @@ async fn contract_configuration_can_be_set_on_initialization() {
         ckd_call_gas_attachment_requirement_tera_gas: Some(55),
         return_signature_and_clean_state_on_success_call_tera_gas: Some(66),
         return_ck_and_clean_state_on_success_call_tera_gas: Some(77),
+        dilithium_key_registration_gas_attachment_requirement_tera_gas: Some(20),
+        return_dilithium_key_and_store_call_tera_gas: Some(10),
         fail_on_timeout_tera_gas: Some(88),
         clean_tee_status_tera_gas: Some(99),
         cleanup_orphaned_node_migrations_tera_gas: Some(11),

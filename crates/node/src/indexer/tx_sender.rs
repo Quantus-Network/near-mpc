@@ -219,6 +219,9 @@ async fn observe_tx_result(
                 Ok(TransactionStatus::NotExecuted)
             }
         }
+        // Dilithium key registration - we don't need to check pending state,
+        // the contract will handle storage. Similar to StartKeygen.
+        DilithiumKeyRespond(_) => Ok(TransactionStatus::Unknown),
         // We don't care. The contract state change will handle this.
         StartKeygen(_)
         | StartReshare(_)

@@ -7,8 +7,9 @@ use anyhow::Context;
 use contract_interface::types as dtos;
 use futures::StreamExt;
 use mpc_contract::primitives::ckd::{CKDRequest, CKDRequestArgs};
+use mpc_contract::primitives::dilithium_derivation::RegisterDilithiumKeyArgs;
 use mpc_contract::primitives::domain::DomainId;
-use mpc_contract::primitives::signature::{Payload, SignRequest, SignRequestArgs};
+use mpc_contract::primitives::signature::{Payload, SignRequest, SignRequestArgs, Tweak};
 use near_account_id::AccountId;
 use near_indexer_primitives::types::FunctionArgs;
 use near_indexer_primitives::views::{
@@ -27,6 +28,11 @@ struct UnvalidatedSignArgs {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct UnvalidatedCKDArgs {
     request: CKDRequestArgs,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct UnvalidatedDilithiumKeyRegistrationArgs {
+    request: RegisterDilithiumKeyArgs,
 }
 
 /// A validated version of the signature request
@@ -64,6 +70,29 @@ pub struct CKDRequestFromChain {
     pub timestamp_nanosec: u64,
 }
 
+/// A Dilithium key registration request from the chain.
+///
+/// Unlike ECC schemes where key derivation is linear (derived = master + tweak),
+/// Dilithium requires a full DKG for each derived key. This request triggers
+/// the MPC nodes to run DKG and respond with the derived public key.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DilithiumKeyRegistrationFromChain {
+    /// The receipt ID that will be used for the response
+    pub request_id: CryptoHash,
+    /// The derivation path
+    pub path: String,
+    /// The domain ID (must be a Dilithium domain)
+    pub domain_id: DomainId,
+    /// The account requesting the key registration
+    pub predecessor_id: AccountId,
+    /// The tweak derived from (predecessor_id, path)
+    pub tweak: Tweak,
+    /// Block entropy for randomness
+    pub entropy: [u8; 32],
+    /// Block timestamp
+    pub timestamp_nanosec: u64,
+}
+
 #[derive(Clone)]
 
 pub struct ChainBlockUpdate {
@@ -72,6 +101,11 @@ pub struct ChainBlockUpdate {
     pub completed_signatures: Vec<SignatureId>,
     pub ckd_requests: Vec<CKDRequestFromChain>,
     pub completed_ckds: Vec<CKDId>,
+    /// Dilithium key registration requests.
+    /// These trigger DKG to create derived Dilithium keys.
+    pub dilithium_key_registrations: Vec<DilithiumKeyRegistrationFromChain>,
+    /// Completed Dilithium key registrations (by request_id/receipt_id)
+    pub completed_dilithium_key_registrations: Vec<CryptoHash>,
 }
 
 #[cfg(feature = "network-hardship-simulation")]
@@ -144,6 +178,8 @@ async fn handle_message(
     let mut completed_signatures = vec![];
     let mut ckd_requests = vec![];
     let mut completed_ckds = vec![];
+    let mut dilithium_key_registrations = vec![];
+    let mut completed_dilithium_key_registrations = vec![];
 
     for shard in streamer_message.shards {
         for outcome in shard.receipt_execution_outcomes {
@@ -193,6 +229,30 @@ async fn handle_message(
                                 metrics::MPC_NUM_CKD_REQUESTS_INDEXED.inc();
                             }
                         }
+                        "register_dilithium_key" => {
+                            if let Some(registration) = try_get_dilithium_key_registration_args(
+                                &receipt,
+                                next_receipt_id,
+                                args,
+                                method_name,
+                            ) {
+                                dilithium_key_registrations.push(
+                                    DilithiumKeyRegistrationFromChain {
+                                        request_id: next_receipt_id,
+                                        path: registration.path,
+                                        domain_id: registration.domain_id,
+                                        predecessor_id: receipt.predecessor_id.clone(),
+                                        tweak: registration.tweak,
+                                        entropy: streamer_message.block.header.random_value.into(),
+                                        timestamp_nanosec: streamer_message
+                                            .block
+                                            .header
+                                            .timestamp_nanosec,
+                                    },
+                                );
+                                metrics::MPC_NUM_DILITHIUM_KEY_REGISTRATIONS_INDEXED.inc();
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -208,6 +268,10 @@ async fn handle_message(
                         "return_ck_and_clean_state_on_success" => {
                             completed_ckds.push(request_id);
                             metrics::MPC_NUM_CKD_RESPONSES_INDEXED.inc();
+                        }
+                        "return_dilithium_key_and_store" => {
+                            completed_dilithium_key_registrations.push(request_id);
+                            metrics::MPC_NUM_DILITHIUM_KEY_RESPONSES_INDEXED.inc();
                         }
                         _ => {}
                     }
@@ -230,6 +294,8 @@ async fn handle_message(
             completed_signatures,
             ckd_requests,
             completed_ckds,
+            dilithium_key_registrations,
+            completed_dilithium_key_registrations,
         })
         .inspect_err(|err| {
             tracing::error!(target: "mpc", %err, "error sending block update to mpc node");
@@ -366,4 +432,53 @@ fn try_get_request_completion(receipt: &ReceiptView, mpc_contract_id: &AccountId
     } else {
         Some(receipt.receipt_id)
     }
+}
+
+/// Parsed Dilithium key registration args with the derived tweak
+#[derive(Debug, Clone)]
+struct ParsedDilithiumKeyRegistration {
+    pub path: String,
+    pub domain_id: DomainId,
+    pub tweak: Tweak,
+}
+
+fn try_get_dilithium_key_registration_args(
+    receipt: &ReceiptView,
+    next_receipt_id: CryptoHash,
+    args: &FunctionArgs,
+    expected_name: &String,
+) -> Option<ParsedDilithiumKeyRegistration> {
+    let registration_args = match serde_json::from_slice::<
+        '_,
+        UnvalidatedDilithiumKeyRegistrationArgs,
+    >(args)
+    {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            tracing::warn!(target: "mpc", %err, "failed to parse `{}` arguments", expected_name);
+            return None;
+        }
+    };
+
+    // Derive the tweak from predecessor + path (same logic as contract)
+    let tweak = mpc_contract::primitives::dilithium_derivation::derive_dilithium_tweak(
+        &receipt.predecessor_id,
+        &registration_args.request.path,
+    );
+
+    tracing::info!(
+        target: "mpc",
+        receipt_id = %receipt.receipt_id,
+        next_receipt_id = %next_receipt_id,
+        caller_id = receipt.predecessor_id.to_string(),
+        path = %registration_args.request.path,
+        domain_id = ?registration_args.request.domain_id,
+        "indexed new `{}` function call", expected_name
+    );
+
+    Some(ParsedDilithiumKeyRegistration {
+        path: registration_args.request.path,
+        domain_id: registration_args.request.domain_id,
+        tweak,
+    })
 }
