@@ -848,11 +848,8 @@ impl MpcContract {
             .remove(&registration)
             .ok_or(InvalidParameters::RequestNotFound)?;
 
-        // Store the derived public key indexed by tweak
-        let tweak_id = DilithiumTweakKeyId::from_registration(&registration);
-        self.store_dilithium_derived_key(tweak_id, response.public_key.clone());
-
-        // Resume the yield promise with the response
+        // Resume the yield promise with the response.
+        // The callback (return_dilithium_key_and_store) will store the derived public key.
         env::promise_yield_resume(&data_id, serde_json::to_vec(&response).unwrap());
 
         Ok(())
