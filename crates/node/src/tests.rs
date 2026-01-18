@@ -54,6 +54,13 @@ mod resharing;
 const DEFAULT_BLOCK_TIME: std::time::Duration = std::time::Duration::from_millis(300);
 const DEFAULT_MAX_PROTOCOL_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(120);
 const DEFAULT_MAX_SIGNATURE_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(120);
+/// Longer timeout for Dilithium DKG which takes longer due to higher k_iterations
+/// (tuned to reduce rejection sampling retries in the signing protocol).
+const DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME: std::time::Duration =
+    std::time::Duration::from_secs(300);
+/// Longer timeout for Dilithium signatures which use higher k_iterations.
+const DEFAULT_MAX_DILITHIUM_SIGNATURE_WAIT_TIME: std::time::Duration =
+    std::time::Duration::from_secs(240);
 
 /// Data needed to start running a test node.
 pub struct OneNodeTestConfig {

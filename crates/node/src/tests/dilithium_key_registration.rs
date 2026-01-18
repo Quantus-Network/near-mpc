@@ -23,7 +23,8 @@ use crate::p2p::testing::PortSeed;
 use crate::tests::{
     request_ckd_and_await_response, request_dilithium_key_registration_and_await_response,
     request_signature_and_await_response, request_signature_and_await_response_with_path,
-    IntegrationTestSetup, DEFAULT_BLOCK_TIME, DEFAULT_MAX_PROTOCOL_WAIT_TIME,
+    IntegrationTestSetup, DEFAULT_BLOCK_TIME, DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
+    DEFAULT_MAX_DILITHIUM_SIGNATURE_WAIT_TIME, DEFAULT_MAX_PROTOCOL_WAIT_TIME,
     DEFAULT_MAX_SIGNATURE_WAIT_TIME,
 };
 use crate::tracking::AutoAbortTask;
@@ -82,7 +83,7 @@ async fn test_dilithium_key_registration_and_sign() {
         .indexer
         .wait_for_contract_state(
             |state| matches!(state, ContractState::Running(_)),
-            DEFAULT_MAX_PROTOCOL_WAIT_TIME,
+            DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
         )
         .await
         .expect("must not exceed timeout for initial DKG");
@@ -105,7 +106,7 @@ async fn test_dilithium_key_registration_and_sign() {
         user,
         path,
         &dilithium_domain,
-        DEFAULT_MAX_SIGNATURE_WAIT_TIME * 2, // DKG takes longer than signing
+        DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME, // DKG takes longer due to higher k_iterations
     )
     .await;
 
@@ -135,7 +136,7 @@ async fn test_dilithium_key_registration_and_sign() {
         user,
         &dilithium_domain,
         path,
-        DEFAULT_MAX_SIGNATURE_WAIT_TIME,
+        DEFAULT_MAX_DILITHIUM_SIGNATURE_WAIT_TIME,
     )
     .await;
 
@@ -192,7 +193,7 @@ async fn test_dilithium_multiple_derived_keys() {
         .indexer
         .wait_for_contract_state(
             |state| matches!(state, ContractState::Running(_)),
-            DEFAULT_MAX_PROTOCOL_WAIT_TIME,
+            DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
         )
         .await
         .expect("must not exceed timeout for initial DKG");
@@ -211,7 +212,7 @@ async fn test_dilithium_multiple_derived_keys() {
             user,
             path,
             &dilithium_domain,
-            DEFAULT_MAX_SIGNATURE_WAIT_TIME * 2,
+            DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME, // Longer timeout for concurrent requests
         )
         .await;
 
@@ -241,7 +242,7 @@ async fn test_dilithium_multiple_derived_keys() {
             user,
             &dilithium_domain,
             path,
-            DEFAULT_MAX_SIGNATURE_WAIT_TIME,
+            DEFAULT_MAX_DILITHIUM_SIGNATURE_WAIT_TIME,
         )
         .await;
 
@@ -301,7 +302,7 @@ async fn test_dilithium_different_users_same_path() {
         .indexer
         .wait_for_contract_state(
             |state| matches!(state, ContractState::Running(_)),
-            DEFAULT_MAX_PROTOCOL_WAIT_TIME,
+            DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
         )
         .await
         .expect("must not exceed timeout for initial DKG");
@@ -320,7 +321,7 @@ async fn test_dilithium_different_users_same_path() {
             user,
             path,
             &dilithium_domain,
-            DEFAULT_MAX_SIGNATURE_WAIT_TIME * 2,
+            DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
         )
         .await;
 
@@ -399,7 +400,7 @@ async fn test_dilithium_sign_without_registration_fails() {
         .indexer
         .wait_for_contract_state(
             |state| matches!(state, ContractState::Running(_)),
-            DEFAULT_MAX_PROTOCOL_WAIT_TIME,
+            DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
         )
         .await
         .expect("must not exceed timeout for initial DKG");
@@ -446,7 +447,7 @@ async fn test_dilithium_sign_without_registration_fails() {
         user,
         "ethereum/0",
         &dilithium_domain,
-        DEFAULT_MAX_SIGNATURE_WAIT_TIME * 2,
+        DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
     )
     .await;
 
@@ -461,7 +462,7 @@ async fn test_dilithium_sign_without_registration_fails() {
         user,
         &dilithium_domain,
         "ethereum/0",
-        DEFAULT_MAX_SIGNATURE_WAIT_TIME,
+        DEFAULT_MAX_DILITHIUM_SIGNATURE_WAIT_TIME,
     )
     .await;
 
@@ -540,7 +541,7 @@ async fn test_dilithium_mixed_domains() {
         .indexer
         .wait_for_contract_state(
             |state| matches!(state, ContractState::Running(_)),
-            DEFAULT_MAX_PROTOCOL_WAIT_TIME * domains.len() as u32,
+            DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME * domains.len() as u32,
         )
         .await
         .expect("must not exceed timeout for initial DKG");
@@ -612,7 +613,7 @@ async fn test_dilithium_mixed_domains() {
         user,
         "ethereum/0",
         &dilithium_domain,
-        DEFAULT_MAX_SIGNATURE_WAIT_TIME * 2,
+        DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
     )
     .await;
     assert!(
@@ -628,7 +629,7 @@ async fn test_dilithium_mixed_domains() {
         user,
         &dilithium_domain,
         "ethereum/0",
-        DEFAULT_MAX_SIGNATURE_WAIT_TIME,
+        DEFAULT_MAX_DILITHIUM_SIGNATURE_WAIT_TIME,
     )
     .await;
     assert!(
@@ -687,7 +688,7 @@ async fn test_dilithium_concurrent_registrations() {
         .indexer
         .wait_for_contract_state(
             |state| matches!(state, ContractState::Running(_)),
-            DEFAULT_MAX_PROTOCOL_WAIT_TIME,
+            DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
         )
         .await
         .expect("must not exceed timeout for initial DKG");
@@ -835,7 +836,7 @@ async fn test_dilithium_duplicate_registration() {
         .indexer
         .wait_for_contract_state(
             |state| matches!(state, ContractState::Running(_)),
-            DEFAULT_MAX_PROTOCOL_WAIT_TIME,
+            DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
         )
         .await
         .expect("must not exceed timeout for initial DKG");
@@ -853,7 +854,7 @@ async fn test_dilithium_duplicate_registration() {
         user,
         path,
         &dilithium_domain,
-        DEFAULT_MAX_SIGNATURE_WAIT_TIME * 2,
+        DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
     )
     .await;
 
@@ -887,7 +888,7 @@ async fn test_dilithium_duplicate_registration() {
         user,
         path,
         &dilithium_domain,
-        std::time::Duration::from_secs(30), // Shorter timeout for duplicate
+        std::time::Duration::from_secs(60), // Shorter timeout for duplicate
     )
     .await;
 
@@ -916,7 +917,7 @@ async fn test_dilithium_duplicate_registration() {
         user,
         &dilithium_domain,
         path,
-        DEFAULT_MAX_SIGNATURE_WAIT_TIME,
+        DEFAULT_MAX_DILITHIUM_SIGNATURE_WAIT_TIME,
     )
     .await;
 
