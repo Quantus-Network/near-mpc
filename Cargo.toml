@@ -117,7 +117,7 @@ regex = "1.12.2"
 reqwest = { version = "0.12.9", features = ["multipart", "json"] }
 rocksdb = "0.21.0"
 rstest = "0.25.0"
-rustls = { version = "0.23.31", default-features = false, features = ["std"] }
+rustls = { version = "0.23.31", default-features = false, features = ["std", "aws_lc_rs", "prefer-post-quantum"] }
 schemars = "0.8.22" # This version needs to be exactly the same as in `near_sdk::schemars`
 serde = { version = "1.0.225", features = ["derive"] }
 serde_json = "1.0.132"
@@ -132,10 +132,13 @@ tempfile = "3.22.0"
 thiserror = "2.0.12"
 # Last commit on main branch as of 09-12-2025
 threshold-signatures = { git = "https://github.com/near/threshold-signatures", rev = "1982f1b4de944d6d3011ee3f4ebbecfc9dd31cd9" }
+# Threshold Dilithium (ML-DSA-87) signatures
+qp-rusty-crystals-threshold = { path = "../qp-rusty-crystals/threshold", features = ["serde"] }
+qp-rusty-crystals-dilithium = { path = "../qp-rusty-crystals/dilithium" }
 tikv-jemallocator = "0.5.4"
 time = "0.3.41"
 tokio = { version = "1.41.0", features = ["full"] }
-tokio-rustls = { version = "0.26.1", default-features = false }
+tokio-rustls = { version = "0.26.1", default-features = false, features = ["aws-lc-rs"] }
 tokio-stream = { version = "0.1" }
 tokio-util = { version = "0.7.12", features = ["time"] }
 tower = "0.5.2"

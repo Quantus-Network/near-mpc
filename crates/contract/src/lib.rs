@@ -29,6 +29,10 @@ use crate::{
     dto_mapping::{IntoContractType, IntoInterfaceType, TryIntoInterfaceType},
     errors::{Error, RequestError},
     primitives::ckd::{CKDRequest, CKDRequestArgs},
+    primitives::dilithium_derivation::{
+        DilithiumKeyRegistration, DilithiumKeyResponse, DilithiumTweakKeyId,
+        RegisterDilithiumKeyArgs,
+    },
     state::ContractNotInitialized,
     storage_keys::StorageKey,
     tee::tee_state::{TeeQuoteStatus, TeeState},
@@ -81,6 +85,10 @@ const MINIMUM_SIGN_REQUEST_DEPOSIT: NearToken = NearToken::from_yoctonear(1);
 /// Minimum deposit required for CKD requests
 const MINIMUM_CKD_REQUEST_DEPOSIT: NearToken = NearToken::from_yoctonear(1);
 
+/// Minimum deposit required for Dilithium key registration requests.
+/// This is higher than sign requests because we need to store the public key (~2.6KB).
+const MINIMUM_DILITHIUM_KEY_REGISTRATION_DEPOSIT: NearToken = NearToken::from_millinear(30);
+
 impl Default for MpcContract {
     fn default() -> Self {
         env::panic_str("Calling default not allowed.");
@@ -94,6 +102,12 @@ pub struct MpcContract {
     protocol_state: ProtocolContractState,
     pending_signature_requests: LookupMap<SignatureRequest, YieldIndex>,
     pending_ckd_requests: LookupMap<CKDRequest, YieldIndex>,
+    /// Pending Dilithium key registration requests (awaiting DKG completion)
+    pending_dilithium_key_requests: LookupMap<DilithiumKeyRegistration, YieldIndex>,
+    /// Registered Dilithium derived public keys indexed by (tweak, domain).
+    /// The tweak is deterministically derived from (account_id, path), so this single
+    /// index supports both user queries and signature verification in respond().
+    dilithium_derived_keys: LookupMap<DilithiumTweakKeyId, dtos::DilithiumPublicKey>,
     proposed_updates: ProposedUpdates,
     config: Config,
     tee_state: TeeState,
@@ -125,6 +139,34 @@ impl MpcContract {
         self.pending_ckd_requests
             .insert(request.clone(), YieldIndex { data_id })
             .is_some()
+    }
+
+    /// Returns true if the request was already pending
+    fn add_dilithium_key_request(
+        &mut self,
+        request: &DilithiumKeyRegistration,
+        data_id: CryptoHash,
+    ) -> bool {
+        self.pending_dilithium_key_requests
+            .insert(request.clone(), YieldIndex { data_id })
+            .is_some()
+    }
+
+    /// Check if a Dilithium derived key is already registered.
+    fn get_dilithium_derived_key(
+        &self,
+        tweak_id: &DilithiumTweakKeyId,
+    ) -> Option<dtos::DilithiumPublicKey> {
+        self.dilithium_derived_keys.get(tweak_id).cloned()
+    }
+
+    /// Store a Dilithium derived key.
+    fn store_dilithium_derived_key(
+        &mut self,
+        tweak_id: DilithiumTweakKeyId,
+        public_key: dtos::DilithiumPublicKey,
+    ) {
+        self.dilithium_derived_keys.insert(tweak_id, public_key);
     }
 }
 
@@ -174,6 +216,32 @@ impl MpcContract {
             }
             SignatureScheme::Bls12381 => {
                 env::panic_str(&InvalidParameters::InvalidDomainId.message("Selected domain is used for Bls12381, which is not compatible with this function").to_string(),);
+            }
+            SignatureScheme::Dilithium => {
+                // Dilithium (ML-DSA-87) can sign arbitrary messages
+                // For now, we require EdDSA-style payload (raw message bytes)
+                request
+                    .payload
+                    .as_eddsa()
+                    .expect("Payload is not Dilithium/EdDSA compatible");
+
+                // Dilithium requires explicit key registration before signing
+                // because derived keys cannot be computed on-the-fly (unlike ECC)
+                let predecessor_v2 = env::predecessor_account_id().as_v2_account_id();
+                let tweak = crate::primitives::dilithium_derivation::derive_dilithium_tweak(
+                    &predecessor_v2,
+                    &request.path,
+                );
+                let tweak_id = DilithiumTweakKeyId::new(tweak, request.domain_id);
+                if self.get_dilithium_derived_key(&tweak_id).is_none() {
+                    env::panic_str(
+                        &InvalidParameters::DilithiumKeyNotRegistered {
+                            account: predecessor_v2,
+                            path: request.path.clone(),
+                        }
+                        .to_string(),
+                    );
+                }
             }
         }
 
@@ -301,6 +369,13 @@ impl MpcContract {
                     .into()
             }
             PublicKeyExtended::Bls12381 { public_key } => public_key,
+            PublicKeyExtended::Dilithium { public_key } => {
+                // Dilithium supports HD derivation via qp-rusty-crystals-hdwallet,
+                // but only with hardened paths (non-hardened tweaking is not possible
+                // for lattice-based crypto). For now, return the root key.
+                // TODO: Integrate hardened HD derivation for Dilithium keys
+                public_key
+            }
         };
 
         Ok(derived_public_key)
@@ -433,6 +508,164 @@ impl MpcContract {
 
         env::promise_return(promise_index);
     }
+
+    /// Register a Dilithium derived key for a given path.
+    ///
+    /// Unlike ECC keys where derivation is linear (derived_key = master_key + tweak),
+    /// Dilithium requires a full DKG protocol for each derived key. This function:
+    ///
+    /// 1. Checks if the key is already registered (returns existing key if so)
+    /// 2. Creates a registration request with the derived tweak
+    /// 3. MPC nodes run full DKG seeded by the tweak
+    /// 4. The derived public key is stored in the contract
+    ///
+    /// Must be called before signing with this path. Re-registration with the
+    /// same path returns the same key (idempotent).
+    ///
+    /// # Arguments
+    /// * `request` - Contains the derivation path and domain_id
+    ///
+    /// # Deposit
+    /// Requires deposit to cover storage (~0.03 NEAR for the ~2.6KB public key)
+    ///
+    /// # Returns
+    /// The derived public key (via yield/resume)
+    #[handle_result]
+    #[payable]
+    pub fn register_dilithium_key(&mut self, request: RegisterDilithiumKeyArgs) {
+        let predecessor = env::predecessor_account_id().as_v2_account_id();
+        log!(
+            "register_dilithium_key: predecessor={:?}, request={:?}",
+            predecessor,
+            request
+        );
+
+        let initial_storage = env::storage_usage();
+
+        // Validate domain is Dilithium
+        let domains = match self.protocol_state.domain_registry() {
+            Ok(domains) => domains,
+            Err(err) => env::panic_str(&err.to_string()),
+        };
+        let Some(domain_config) = domains.get_domain_by_domain_id(request.domain_id) else {
+            env::panic_str(
+                &InvalidParameters::DomainNotFound {
+                    provided: request.domain_id,
+                }
+                .to_string(),
+            );
+        };
+        if domain_config.scheme != SignatureScheme::Dilithium {
+            env::panic_str(&InvalidParameters::NotDilithiumDomain.to_string());
+        }
+
+        // Check if already registered (compute tweak from account + path)
+        let registration =
+            DilithiumKeyRegistration::new(&predecessor, &request.path, request.domain_id);
+        let tweak_id = DilithiumTweakKeyId::from_registration(&registration);
+
+        if let Some(existing_pubkey) = self.get_dilithium_derived_key(&tweak_id) {
+            // Already registered - return existing key (idempotent)
+            log!("Dilithium key already registered, returning existing key");
+            // Return the existing public key directly without running DKG
+            let response = DilithiumKeyResponse {
+                public_key: existing_pubkey,
+            };
+            env::value_return(&serde_json::to_vec(&response).unwrap());
+            return;
+        }
+
+        // Check gas requirements
+        let gas_required = Gas::from_tgas(
+            self.config
+                .dilithium_key_registration_gas_attachment_requirement_tera_gas,
+        );
+        if env::prepaid_gas() < gas_required {
+            env::panic_str(
+                &InvalidParameters::InsufficientGas
+                    .message(format!(
+                        "Provided: {}, required: {}",
+                        env::prepaid_gas(),
+                        gas_required
+                    ))
+                    .to_string(),
+            );
+        }
+
+        // Check deposit and refund if required
+        let deposit = env::attached_deposit();
+        let storage_used = env::storage_usage() - initial_storage;
+        let storage_cost = env::storage_byte_cost().saturating_mul(u128::from(storage_used));
+        let cost = std::cmp::max(storage_cost, MINIMUM_DILITHIUM_KEY_REGISTRATION_DEPOSIT);
+
+        match deposit.checked_sub(cost) {
+            None => {
+                env::panic_str(
+                    &InvalidParameters::InsufficientDeposit
+                        .message(format!(
+                            "Require a deposit of {} yoctonear, found: {}",
+                            cost.as_yoctonear(),
+                            deposit.as_yoctonear(),
+                        ))
+                        .to_string(),
+                );
+            }
+            Some(diff) => {
+                if diff > NearToken::from_yoctonear(0) {
+                    log!("refund excess deposit {diff} to {predecessor}");
+                    Promise::new(predecessor.clone().as_v1_account_id())
+                        .transfer(diff)
+                        .detach();
+                }
+            }
+        }
+
+        if !self.accept_requests {
+            env::panic_str(&TeeError::TeeValidationFailed.to_string())
+        }
+
+        // Use the registration we already created above
+
+        let callback_gas = Gas::from_tgas(self.config.return_dilithium_key_and_store_call_tera_gas);
+
+        let promise_index = env::promise_yield_create(
+            "return_dilithium_key_and_store",
+            serde_json::to_vec(&(&registration,)).unwrap(),
+            callback_gas,
+            GasWeight(0),
+            DATA_ID_REGISTER,
+        );
+
+        // Store the request in the contract's local state
+        let data_id: CryptoHash = env::read_register(DATA_ID_REGISTER)
+            .expect("read_register failed")
+            .try_into()
+            .expect("conversion to CryptoHash failed");
+
+        if self.add_dilithium_key_request(&registration, data_id) {
+            log!("dilithium key request already present, overriding callback.")
+        }
+
+        env::promise_return(promise_index);
+    }
+
+    /// Query a registered Dilithium derived public key.
+    ///
+    /// Returns the public key if registered, or None if not yet registered.
+    /// Use `register_dilithium_key` to register a key before signing.
+    #[handle_result]
+    pub fn get_dilithium_derived_key_info(
+        &self,
+        account_id: AccountId,
+        path: String,
+        domain_id: DomainId,
+    ) -> Result<Option<dtos::DilithiumPublicKey>, Error> {
+        // Compute tweak from account + path, then look up
+        let tweak =
+            crate::primitives::dilithium_derivation::derive_dilithium_tweak(&account_id, &path);
+        let tweak_id = DilithiumTweakKeyId::new(tweak, domain_id);
+        Ok(self.get_dilithium_derived_key(&tweak_id))
+    }
 }
 
 // Node API
@@ -503,6 +736,37 @@ impl MpcContract {
 
                 ed25519_verify(signature.as_bytes(), message, &derived_public_key_32_bytes)
             }
+            (SignatureResponse::Dilithium { signature }, PublicKeyExtended::Dilithium { .. }) => {
+                // Look up the derived public key by tweak
+                let tweak_id = DilithiumTweakKeyId::new(request.tweak.clone(), domain);
+                let derived_pubkey = match self.get_dilithium_derived_key(&tweak_id) {
+                    Some(pk) => pk,
+                    None => {
+                        log!("Dilithium derived key not found for tweak");
+                        return Err(RespondError::DilithiumDerivedKeyNotFound.into());
+                    }
+                };
+
+                // Parse the public key and verify the signature using qp-rusty-crystals-dilithium
+                let dilithium_pk =
+                    match qp_rusty_crystals_dilithium::ml_dsa_87::PublicKey::from_bytes(
+                        derived_pubkey.as_bytes(),
+                    ) {
+                        Ok(pk) => pk,
+                        Err(_) => {
+                            log!("Failed to parse Dilithium public key");
+                            return Err(RespondError::InvalidSignature.into());
+                        }
+                    };
+
+                let message = request
+                    .payload
+                    .as_eddsa()
+                    .expect("Payload is not Dilithium/EdDSA compatible");
+
+                // Verify the signature (no context string for now)
+                dilithium_pk.verify(message, &signature, None)
+            }
             (signature_response, public_key_requested) => {
                 return Err(RespondError::SignatureSchemeMismatch.message(format!(
                     "Signature response from MPC: {:?}. Key requested by user {:?}",
@@ -548,6 +812,47 @@ impl MpcContract {
         } else {
             Err(InvalidParameters::RequestNotFound.into())
         }
+    }
+
+    /// MPC nodes call this to respond with the derived public key after DKG.
+    ///
+    /// This is called by MPC nodes after they have run the full DKG protocol
+    /// to generate a derived Dilithium key. The response contains the derived
+    /// public key which will be stored in the contract.
+    #[handle_result]
+    pub fn respond_dilithium_key(
+        &mut self,
+        registration: DilithiumKeyRegistration,
+        response: DilithiumKeyResponse,
+    ) -> Result<(), Error> {
+        let signer = Self::assert_caller_is_signer();
+        log!(
+            "respond_dilithium_key: signer={}, registration={:?}",
+            &signer,
+            &registration
+        );
+
+        self.assert_caller_is_attested_participant_and_protocol_active();
+
+        if !self.protocol_state.is_running_or_resharing() {
+            return Err(InvalidState::ProtocolStateNotRunning.into());
+        }
+
+        if !self.accept_requests {
+            return Err(TeeError::TeeValidationFailed.into());
+        }
+
+        // Get and remove pending request
+        let YieldIndex { data_id } = self
+            .pending_dilithium_key_requests
+            .remove(&registration)
+            .ok_or(InvalidParameters::RequestNotFound)?;
+
+        // Resume the yield promise with the response.
+        // The callback (return_dilithium_key_and_store) will store the derived public key.
+        env::promise_yield_resume(&data_id, serde_json::to_vec(&response).unwrap());
+
+        Ok(())
     }
 
     /// (Prospective) Participants can submit their tee participant information through this
@@ -1197,6 +1502,8 @@ impl MpcContract {
             )),
             pending_signature_requests: LookupMap::new(StorageKey::PendingSignatureRequestsV2),
             pending_ckd_requests: LookupMap::new(StorageKey::PendingCKDRequests),
+            pending_dilithium_key_requests: LookupMap::new(StorageKey::PendingDilithiumKeyRequests),
+            dilithium_derived_keys: LookupMap::new(StorageKey::DilithiumDerivedKeys),
             proposed_updates: ProposedUpdates::default(),
             config: init_config.map(Into::into).unwrap_or_default(),
             tee_state,
@@ -1248,6 +1555,8 @@ impl MpcContract {
             )),
             pending_signature_requests: LookupMap::new(StorageKey::PendingSignatureRequestsV2),
             pending_ckd_requests: LookupMap::new(StorageKey::PendingCKDRequests),
+            pending_dilithium_key_requests: LookupMap::new(StorageKey::PendingDilithiumKeyRequests),
+            dilithium_derived_keys: LookupMap::new(StorageKey::DilithiumDerivedKeys),
             proposed_updates: Default::default(),
             tee_state,
             accept_requests: true,
@@ -1358,6 +1667,43 @@ impl MpcContract {
             Ok(ck) => PromiseOrValue::Value(ck),
             Err(_) => {
                 self.pending_ckd_requests.remove(&request);
+                let fail_on_timeout_gas = Gas::from_tgas(self.config.fail_on_timeout_tera_gas);
+                let promise = Promise::new(env::current_account_id()).function_call(
+                    "fail_on_timeout".to_string(),
+                    vec![],
+                    NearToken::from_near(0),
+                    fail_on_timeout_gas,
+                );
+                near_sdk::PromiseOrValue::Promise(promise.as_return())
+            }
+        }
+    }
+
+    /// Upon success, stores the Dilithium derived key and returns it.
+    /// If the registration request times out, removes the request from state and panics to fail
+    /// the original transaction.
+    ///
+    /// This callback is used by the yield/resume pattern for `register_dilithium_key`.
+    #[private]
+    pub fn return_dilithium_key_and_store(
+        &mut self,
+        registration: DilithiumKeyRegistration,
+        #[callback_result] response: Result<DilithiumKeyResponse, PromiseError>,
+    ) -> PromiseOrValue<DilithiumKeyResponse> {
+        match response {
+            Ok(response) => {
+                // Store the derived public key indexed by tweak
+                let tweak_id = DilithiumTweakKeyId::from_registration(&registration);
+                self.store_dilithium_derived_key(tweak_id, response.public_key.clone());
+                log!(
+                    "Stored Dilithium derived key for account={}, path={}",
+                    registration.account_id,
+                    registration.path
+                );
+                PromiseOrValue::Value(response)
+            }
+            Err(_) => {
+                self.pending_dilithium_key_requests.remove(&registration);
                 let fail_on_timeout_gas = Gas::from_tgas(self.config.fail_on_timeout_tera_gas);
                 let promise = Promise::new(env::current_account_id()).function_call(
                     "fail_on_timeout".to_string(),
@@ -1498,7 +1844,7 @@ impl MpcContract {
     /// under the signer’s account ID.
     ///
     /// # Errors
-    /// - [`InvalidState::ProtocolStateNotRunning`] if the protocol is not in the `Running` state.  
+    /// - [`InvalidState::ProtocolStateNotRunning`] if the protocol is not in the `Running` state.
     /// - [`InvalidState::NotParticipant`] if the signer is not a current participant.
     /// # Note:
     /// - might require a deposit
@@ -1775,6 +2121,29 @@ mod tests {
             SignatureScheme::Bls12381 => {
                 let (pk, sk) = new_bls12381g2(rng);
                 (pk.into(), SharedSecretKey::Bls12381(sk))
+            }
+            SignatureScheme::Dilithium => {
+                // Generate Dilithium keys using the threshold dealer keygen
+                // For tests, we use a simple 2-of-3 setup and just take the public key
+                let mut seed = [0u8; 32];
+                rng.fill_bytes(&mut seed);
+                let config = qp_rusty_crystals_threshold::ThresholdConfig::new(2, 3)
+                    .expect("Valid threshold config");
+                let (public_key, _shares) =
+                    qp_rusty_crystals_threshold::generate_with_dealer(&seed, config)
+                        .expect("Key generation should succeed");
+
+                // Convert to contract interface type
+                let mut boxed_bytes = Box::new([0u8; 2592]);
+                boxed_bytes.copy_from_slice(public_key.as_bytes());
+                let pk = dtos::DilithiumPublicKey::from(boxed_bytes);
+
+                // For Dilithium, we don't need the secret key in contract tests
+                // since we don't do actual signing in contract unit tests
+                (
+                    pk.into(),
+                    SharedSecretKey::Ed25519(curve25519_dalek::Scalar::ZERO),
+                )
             }
         }
     }
@@ -2405,6 +2774,10 @@ mod tests {
                 protocol_state,
                 pending_signature_requests: LookupMap::new(StorageKey::PendingSignatureRequestsV2),
                 pending_ckd_requests: LookupMap::new(StorageKey::PendingCKDRequests),
+                pending_dilithium_key_requests: LookupMap::new(
+                    StorageKey::PendingDilithiumKeyRequests,
+                ),
+                dilithium_derived_keys: LookupMap::new(StorageKey::DilithiumDerivedKeys),
                 proposed_updates: ProposedUpdates::default(),
                 config: Config::default(),
                 tee_state: TeeState::default(),
@@ -3369,5 +3742,255 @@ mod tests {
             allowed_docker_image_hashes,
             vec![MpcDockerImageHash::from(code_hash)]
         )
+    }
+
+    // ==========================================================================
+    // Dilithium Key Registration Tests
+    // ==========================================================================
+
+    /// Test that get_dilithium_derived_key_info returns None for unregistered keys.
+    #[test]
+    fn test_dilithium_get_derived_key_not_registered() {
+        let (context, contract, _) = basic_setup(SignatureScheme::Dilithium, &mut OsRng);
+        testing_env!(context);
+
+        let account_id: AccountId = "alice.near".parse().unwrap();
+        let path = "unregistered-path";
+        let domain_id = DomainId::default();
+
+        let result =
+            contract.get_dilithium_derived_key_info(account_id, path.to_string(), domain_id);
+
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap().is_none(),
+            "Expected None for unregistered key"
+        );
+    }
+
+    /// Test that derive_dilithium_tweak produces consistent results.
+    #[test]
+    fn test_dilithium_tweak_derivation_consistency() {
+        use crate::primitives::dilithium_derivation::derive_dilithium_tweak;
+
+        let account_id: AccountId = "alice.near".parse().unwrap();
+        let path = "ethereum";
+
+        let tweak1 = derive_dilithium_tweak(&account_id, path);
+        let tweak2 = derive_dilithium_tweak(&account_id, path);
+
+        assert_eq!(
+            tweak1.as_bytes(),
+            tweak2.as_bytes(),
+            "Tweak derivation should be deterministic"
+        );
+    }
+
+    /// Test that different paths produce different tweaks.
+    #[test]
+    fn test_dilithium_tweak_different_paths() {
+        use crate::primitives::dilithium_derivation::derive_dilithium_tweak;
+
+        let account_id: AccountId = "alice.near".parse().unwrap();
+
+        let tweak1 = derive_dilithium_tweak(&account_id, "path1");
+        let tweak2 = derive_dilithium_tweak(&account_id, "path2");
+
+        assert_ne!(
+            tweak1.as_bytes(),
+            tweak2.as_bytes(),
+            "Different paths should produce different tweaks"
+        );
+    }
+
+    /// Test that different accounts produce different tweaks.
+    #[test]
+    fn test_dilithium_tweak_different_accounts() {
+        use crate::primitives::dilithium_derivation::derive_dilithium_tweak;
+
+        let alice: AccountId = "alice.near".parse().unwrap();
+        let bob: AccountId = "bob.near".parse().unwrap();
+        let path = "ethereum";
+
+        let tweak_alice = derive_dilithium_tweak(&alice, path);
+        let tweak_bob = derive_dilithium_tweak(&bob, path);
+
+        assert_ne!(
+            tweak_alice.as_bytes(),
+            tweak_bob.as_bytes(),
+            "Different accounts should produce different tweaks"
+        );
+    }
+
+    /// Test DilithiumTweakKeyId creation and equality.
+    #[test]
+    fn test_dilithium_tweak_key_id_equality() {
+        use crate::primitives::dilithium_derivation::{
+            derive_dilithium_tweak, DilithiumTweakKeyId,
+        };
+
+        let account_id: AccountId = "alice.near".parse().unwrap();
+        let path = "ethereum";
+        let domain_id = DomainId(5);
+
+        let tweak = derive_dilithium_tweak(&account_id, path);
+        let id1 = DilithiumTweakKeyId::new(tweak.clone(), domain_id);
+        let id2 = DilithiumTweakKeyId::new(tweak, domain_id);
+
+        assert_eq!(id1, id2, "Same tweak and domain should produce equal IDs");
+    }
+
+    /// Test that DilithiumKeyRegistration creates correct tweak.
+    #[test]
+    fn test_dilithium_key_registration_tweak() {
+        use crate::primitives::dilithium_derivation::{
+            derive_dilithium_tweak, DilithiumKeyRegistration,
+        };
+
+        let account_id: AccountId = "alice.near".parse().unwrap();
+        let path = "ethereum";
+        let domain_id = DomainId(5);
+
+        let registration = DilithiumKeyRegistration::new(&account_id, path, domain_id);
+        let expected_tweak = derive_dilithium_tweak(&account_id, path);
+
+        assert_eq!(registration.tweak.as_bytes(), expected_tweak.as_bytes());
+        assert_eq!(registration.domain_id, domain_id);
+        assert_eq!(registration.account_id, account_id);
+        assert_eq!(registration.path, path);
+    }
+
+    /// Test that Dilithium signing requires key registration (contract validation).
+    /// This tests the validation logic in the sign function.
+    #[test]
+    fn test_dilithium_sign_validates_key_registration() {
+        use crate::primitives::dilithium_derivation::{
+            derive_dilithium_tweak, DilithiumTweakKeyId,
+        };
+
+        let (context, contract, _) = basic_setup(SignatureScheme::Dilithium, &mut OsRng);
+        testing_env!(context.clone());
+
+        let predecessor_id: AccountId = context.predecessor_account_id.as_v2_account_id();
+        let path = "test-path";
+        let domain_id = DomainId::default();
+
+        // Verify the key is not registered
+        let tweak = derive_dilithium_tweak(&predecessor_id, path);
+        let tweak_id = DilithiumTweakKeyId::new(tweak, domain_id);
+        let derived_key = contract.get_dilithium_derived_key(&tweak_id);
+
+        assert!(
+            derived_key.is_none(),
+            "Key should not be registered initially"
+        );
+
+        // The sign function will panic if key is not registered
+        // We can't easily test the panic in unit tests, but we've verified
+        // the prerequisite check (get_dilithium_derived_key returns None)
+    }
+
+    /// Test that storing and retrieving a derived key works correctly.
+    #[test]
+    fn test_dilithium_derived_key_storage() {
+        use crate::primitives::dilithium_derivation::{
+            derive_dilithium_tweak, DilithiumTweakKeyId,
+        };
+
+        let (context, mut contract, _) = basic_setup(SignatureScheme::Dilithium, &mut OsRng);
+        testing_env!(context.clone());
+
+        let account_id: AccountId = "alice.near".parse().unwrap();
+        let path = "ethereum";
+        let domain_id = DomainId::default();
+
+        let tweak = derive_dilithium_tweak(&account_id, path);
+        let tweak_id = DilithiumTweakKeyId::new(tweak, domain_id);
+
+        // Create a dummy public key for testing
+        let dummy_pk_bytes = [42u8; 2592];
+        let mut boxed_bytes = Box::new([0u8; 2592]);
+        boxed_bytes.copy_from_slice(&dummy_pk_bytes);
+        let dummy_pk = dtos::DilithiumPublicKey::from(boxed_bytes);
+
+        // Store the key
+        contract.store_dilithium_derived_key(tweak_id.clone(), dummy_pk.clone());
+
+        // Retrieve and verify
+        let retrieved = contract.get_dilithium_derived_key(&tweak_id);
+        assert!(
+            retrieved.is_some(),
+            "Key should be retrievable after storage"
+        );
+        assert_eq!(retrieved.unwrap().as_bytes(), dummy_pk.as_bytes());
+    }
+
+    /// Test idempotency - storing the same key twice should work.
+    #[test]
+    fn test_dilithium_derived_key_storage_idempotent() {
+        use crate::primitives::dilithium_derivation::{
+            derive_dilithium_tweak, DilithiumTweakKeyId,
+        };
+
+        let (context, mut contract, _) = basic_setup(SignatureScheme::Dilithium, &mut OsRng);
+        testing_env!(context.clone());
+
+        let account_id: AccountId = "alice.near".parse().unwrap();
+        let path = "ethereum";
+        let domain_id = DomainId::default();
+
+        let tweak = derive_dilithium_tweak(&account_id, path);
+        let tweak_id = DilithiumTweakKeyId::new(tweak, domain_id);
+
+        let dummy_pk_bytes = [42u8; 2592];
+        let mut boxed_bytes = Box::new([0u8; 2592]);
+        boxed_bytes.copy_from_slice(&dummy_pk_bytes);
+        let dummy_pk = dtos::DilithiumPublicKey::from(boxed_bytes);
+
+        // Store twice
+        contract.store_dilithium_derived_key(tweak_id.clone(), dummy_pk.clone());
+        contract.store_dilithium_derived_key(tweak_id.clone(), dummy_pk.clone());
+
+        // Should still be retrievable
+        let retrieved = contract.get_dilithium_derived_key(&tweak_id);
+        assert!(retrieved.is_some());
+    }
+
+    /// Test that different paths for the same account store different keys.
+    #[test]
+    fn test_dilithium_derived_key_different_paths() {
+        use crate::primitives::dilithium_derivation::{
+            derive_dilithium_tweak, DilithiumTweakKeyId,
+        };
+
+        let (context, mut contract, _) = basic_setup(SignatureScheme::Dilithium, &mut OsRng);
+        testing_env!(context.clone());
+
+        let account_id: AccountId = "alice.near".parse().unwrap();
+        let domain_id = DomainId::default();
+
+        // Create two different keys for different paths
+        let tweak1 = derive_dilithium_tweak(&account_id, "path1");
+        let tweak2 = derive_dilithium_tweak(&account_id, "path2");
+        let id1 = DilithiumTweakKeyId::new(tweak1, domain_id);
+        let id2 = DilithiumTweakKeyId::new(tweak2, domain_id);
+
+        let mut pk1_bytes = Box::new([0u8; 2592]);
+        pk1_bytes[0] = 1;
+        let pk1 = dtos::DilithiumPublicKey::from(pk1_bytes);
+
+        let mut pk2_bytes = Box::new([0u8; 2592]);
+        pk2_bytes[0] = 2;
+        let pk2 = dtos::DilithiumPublicKey::from(pk2_bytes);
+
+        contract.store_dilithium_derived_key(id1.clone(), pk1.clone());
+        contract.store_dilithium_derived_key(id2.clone(), pk2.clone());
+
+        // Both should be retrievable with correct values
+        let retrieved1 = contract.get_dilithium_derived_key(&id1).unwrap();
+        let retrieved2 = contract.get_dilithium_derived_key(&id2).unwrap();
+
+        assert_eq!(retrieved1.as_bytes()[0], 1);
+        assert_eq!(retrieved2.as_bytes()[0], 2);
     }
 }

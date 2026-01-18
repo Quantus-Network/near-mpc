@@ -59,6 +59,8 @@ tempfile = { workspace = true }
 test-utils = { workspace = true }
 thiserror = { workspace = true }
 threshold-signatures = { workspace = true }
+qp-rusty-crystals-threshold = { workspace = true }
+getrandom = { workspace = true }
 tikv-jemallocator = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }

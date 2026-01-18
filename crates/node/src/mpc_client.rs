@@ -1,26 +1,34 @@
 use crate::config::ConfigFile;
-use crate::indexer::handler::{CKDRequestFromChain, ChainBlockUpdate, SignatureRequestFromChain};
+use crate::indexer::handler::{
+    CKDRequestFromChain, ChainBlockUpdate, DilithiumKeyRegistrationFromChain,
+    SignatureRequestFromChain,
+};
 use crate::indexer::tx_sender::TransactionSender;
 use crate::indexer::types::{
-    ChainCKDRespondArgs, ChainSendTransactionRequest, ChainSignatureRespondArgs,
+    ChainCKDRespondArgs, ChainDilithiumKeyRespondArgs, ChainSendTransactionRequest,
+    ChainSignatureRespondArgs,
 };
 use crate::metrics;
 use crate::network::{MeshNetworkClient, NetworkTaskChannel};
 use crate::primitives::MpcTaskId;
 use crate::providers::ckd::CKDProvider;
+use crate::providers::dilithium::DilithiumSignatureProvider;
 use crate::providers::eddsa::EddsaSignatureProvider;
 use crate::providers::robust_ecdsa::RobustEcdsaSignatureProvider;
 use crate::providers::{EcdsaSignatureProvider, SignatureProvider};
 use crate::requests::queue::{PendingRequests, CHECK_EACH_REQUEST_INTERVAL};
 use crate::storage::CKDRequestStorage;
+use crate::storage::DilithiumKeyRegistrationStorage;
 use crate::storage::SignRequestStorage;
 use crate::tracking::{self, AutoAbortTaskCollection};
 use crate::trait_extensions::convert_to_contract_dto::IntoContractInterfaceType;
 use crate::types::CKDRequest;
+use crate::types::DilithiumKeyRegistrationRequest;
 use crate::types::SignatureRequest;
 use crate::web::{DebugRequest, DebugRequestKind};
 
 use mpc_contract::crypto_shared::{derive_tweak, CKDResponse};
+use mpc_contract::primitives::dilithium_derivation::derive_dilithium_tweak;
 use mpc_contract::primitives::domain::{DomainId, SignatureScheme};
 use near_time::Clock;
 use std::collections::HashMap;
@@ -44,10 +52,12 @@ pub struct MpcClient {
     client: Arc<MeshNetworkClient>,
     sign_request_store: Arc<SignRequestStorage>,
     ckd_request_store: Arc<CKDRequestStorage>,
+    dilithium_key_registration_store: Arc<DilithiumKeyRegistrationStorage>,
     ecdsa_signature_provider: Arc<EcdsaSignatureProvider>,
     robust_ecdsa_signature_provider: Arc<RobustEcdsaSignatureProvider>,
     eddsa_signature_provider: Arc<EddsaSignatureProvider>,
     ckd_provider: Arc<CKDProvider>,
+    dilithium_signature_provider: Arc<DilithiumSignatureProvider>,
     domain_to_scheme: HashMap<DomainId, SignatureScheme>,
 }
 
@@ -58,10 +68,12 @@ impl MpcClient {
         client: Arc<MeshNetworkClient>,
         sign_request_store: Arc<SignRequestStorage>,
         ckd_request_store: Arc<CKDRequestStorage>,
+        dilithium_key_registration_store: Arc<DilithiumKeyRegistrationStorage>,
         ecdsa_signature_provider: Arc<EcdsaSignatureProvider>,
         robust_ecdsa_signature_provider: Arc<RobustEcdsaSignatureProvider>,
         eddsa_signature_provider: Arc<EddsaSignatureProvider>,
         ckd_provider: Arc<CKDProvider>,
+        dilithium_signature_provider: Arc<DilithiumSignatureProvider>,
         domain_to_scheme: HashMap<DomainId, SignatureScheme>,
     ) -> Self {
         Self {
@@ -69,10 +81,12 @@ impl MpcClient {
             client,
             sign_request_store,
             ckd_request_store,
+            dilithium_key_registration_store,
             ecdsa_signature_provider,
             robust_ecdsa_signature_provider,
             eddsa_signature_provider,
             ckd_provider,
+            dilithium_signature_provider,
             domain_to_scheme,
         }
     }
@@ -195,6 +209,13 @@ impl MpcClient {
             self.client.my_participant_id(),
             self.client.clone(),
         );
+        let mut pending_dilithium_key_registrations =
+            PendingRequests::<DilithiumKeyRegistrationRequest, ChainDilithiumKeyRespondArgs>::new(
+                Clock::real(),
+                self.client.all_participant_ids(),
+                self.client.my_participant_id(),
+                self.client.clone(),
+            );
 
         let start_time = Clock::real().now();
         loop {
@@ -220,11 +241,20 @@ impl MpcClient {
                                 entropy,
                                 timestamp_nanosec,
                             } = signature_request_from_chain;
+                            // Use appropriate tweak derivation based on signature scheme.
+                            // Dilithium uses a different derivation function than ECC schemes
+                            // because Dilithium derivation is non-linear and requires DKG.
+                            let tweak = match self.domain_to_scheme.get(&request.domain_id) {
+                                Some(SignatureScheme::Dilithium) => {
+                                    derive_dilithium_tweak(&predecessor_id, &request.path)
+                                }
+                                _ => derive_tweak(&predecessor_id, &request.path),
+                            };
                             let signature_request = SignatureRequest {
                                 id: signature_id,
                                 receipt_id,
                                 payload: request.payload,
-                                tweak: derive_tweak(&predecessor_id, &request.path),
+                                tweak,
                                 entropy,
                                 timestamp_nanosec,
                                 domain: request.domain_id,
@@ -276,7 +306,32 @@ impl MpcClient {
                         &block_update.block,
                     );
 
+                    // Process Dilithium key registration requests using PendingRequests pattern
+                    let dilithium_key_registration_requests = block_update
+                        .dilithium_key_registrations
+                        .into_iter()
+                        .map(|registration| {
+                            let request = DilithiumKeyRegistrationRequest {
+                                id: registration.request_id,
+                                receipt_id: registration.request_id,
+                                path: registration.path.clone(),
+                                domain_id: registration.domain_id,
+                                predecessor_id: registration.predecessor_id.clone(),
+                                tweak: registration.tweak.clone(),
+                                entropy: registration.entropy,
+                                timestamp_nanosec: registration.timestamp_nanosec,
+                            };
+                            // Index the requests as soon as we see them
+                            self.dilithium_key_registration_store.add(&request);
+                            request
+                        })
+                        .collect::<Vec<_>>();
 
+                    pending_dilithium_key_registrations.notify_new_block(
+                        dilithium_key_registration_requests,
+                        block_update.completed_dilithium_key_registrations,
+                        &block_update.block,
+                    );
 
                 }
                 debug_request = debug_receiver.recv() => {
@@ -385,6 +440,22 @@ impl MpcClient {
 
                                         Ok(response)
                                     }
+                                    Some(SignatureScheme::Dilithium) => {
+                                        let (signature, _public_key) = timeout(
+                                            Duration::from_secs(this.config.signature.timeout_sec),
+                                            this.dilithium_signature_provider
+                                                .clone()
+                                                .make_signature(signature_attempt.request.id),
+                                        )
+                                        .await??;
+
+                                        let response = ChainSignatureRespondArgs::new_dilithium(
+                                            &signature_attempt.request,
+                                            &signature,
+                                        )?;
+
+                                        Ok(response)
+                                    }
                                     None => Err(anyhow::anyhow!(
                                         "Signature scheme is not found for domain: {:?}",
                                         signature_attempt.request.domain.clone()
@@ -417,6 +488,111 @@ impl MpcClient {
                     },
                 );
             }
+            // Process Dilithium key registration attempts
+            let dilithium_key_registration_attempts =
+                pending_dilithium_key_registrations.get_requests_to_attempt();
+
+            for registration_attempt in dilithium_key_registration_attempts {
+                let this = self.clone();
+                let chain_txn_sender_dilithium = chain_txn_sender.clone();
+                tasks.spawn_checked(
+                    &format!(
+                        "leader for dilithium key registration {:?}",
+                        registration_attempt.request.id
+                    ),
+                    async move {
+                        // Only issue DKG computation if we haven't computed it in a previous attempt
+                        let existing_response = registration_attempt
+                            .computation_progress
+                            .lock()
+                            .unwrap()
+                            .computed_response
+                            .clone();
+                        let response = match existing_response {
+                            None => {
+                                metrics::MPC_NUM_DILITHIUM_KEY_COMPUTATIONS_LED
+                                    .with_label_values(&["total"])
+                                    .inc();
+
+                                // Run DKG to create the derived key
+                                let result = timeout(
+                                    Duration::from_secs(this.config.signature.timeout_sec),
+                                    this.dilithium_signature_provider
+                                        .run_key_registration_as_leader(
+                                            registration_attempt.request.domain_id,
+                                            registration_attempt.request.tweak.clone(),
+                                        ),
+                                )
+                                .await;
+
+                                let response = match result {
+                                    Ok(Ok(public_key)) => {
+                                        // Create the response args from the request
+                                        let registration_from_chain =
+                                            DilithiumKeyRegistrationFromChain {
+                                                request_id: registration_attempt.request.id,
+                                                path: registration_attempt.request.path.clone(),
+                                                domain_id: registration_attempt.request.domain_id,
+                                                predecessor_id: registration_attempt
+                                                    .request
+                                                    .predecessor_id
+                                                    .clone(),
+                                                tweak: registration_attempt.request.tweak.clone(),
+                                                entropy: registration_attempt.request.entropy,
+                                                timestamp_nanosec: registration_attempt
+                                                    .request
+                                                    .timestamp_nanosec,
+                                            };
+                                        ChainDilithiumKeyRespondArgs::new(
+                                            &registration_from_chain,
+                                            &public_key,
+                                        )
+                                    }
+                                    Ok(Err(err)) => {
+                                        tracing::error!(
+                                            target: "mpc",
+                                            ?err,
+                                            "Dilithium key registration DKG failed"
+                                        );
+                                        Err(err)
+                                    }
+                                    Err(_) => {
+                                        tracing::error!(
+                                            target: "mpc",
+                                            "Dilithium key registration DKG timed out"
+                                        );
+                                        Err(anyhow::anyhow!("DKG timed out"))
+                                    }
+                                }?;
+
+                                metrics::MPC_NUM_DILITHIUM_KEY_COMPUTATIONS_LED
+                                    .with_label_values(&["succeeded"])
+                                    .inc();
+
+                                registration_attempt
+                                    .computation_progress
+                                    .lock()
+                                    .unwrap()
+                                    .computed_response = Some(response.clone());
+                                response
+                            }
+                            Some(response) => response,
+                        };
+
+                        let _ = chain_txn_sender_dilithium
+                            .send(ChainSendTransactionRequest::DilithiumKeyRespond(response))
+                            .await;
+                        registration_attempt
+                            .computation_progress
+                            .lock()
+                            .unwrap()
+                            .last_response_submission = Some(Clock::real().now());
+
+                        anyhow::Ok(())
+                    },
+                );
+            }
+
             let ckd_attempts = pending_ckds.get_requests_to_attempt();
 
             for ckd_attempt in ckd_attempts {
@@ -464,7 +640,8 @@ impl MpcClient {
                                     }
                                     Some(SignatureScheme::Secp256k1)
                                     | Some(SignatureScheme::V2Secp256k1)
-                                    | Some(SignatureScheme::Ed25519) => Err(anyhow::anyhow!(
+                                    | Some(SignatureScheme::Ed25519)
+                                    | Some(SignatureScheme::Dilithium) => Err(anyhow::anyhow!(
                                         "Signature scheme is not allowed for domain: {:?}",
                                         ckd_attempt.request.domain_id.clone()
                                     )),
@@ -543,6 +720,12 @@ impl MpcClient {
             MpcTaskId::CKDTaskId(_) => self.ckd_provider.clone().process_channel(channel).await?,
             MpcTaskId::RobustEcdsaTaskId(_) => {
                 self.robust_ecdsa_signature_provider
+                    .clone()
+                    .process_channel(channel)
+                    .await?
+            }
+            MpcTaskId::DilithiumTaskId(_) => {
+                self.dilithium_signature_provider
                     .clone()
                     .process_channel(channel)
                     .await?

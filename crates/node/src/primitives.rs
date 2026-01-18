@@ -1,4 +1,5 @@
 use crate::providers::ckd::CKDTaskId;
+use crate::providers::dilithium::DilithiumTaskId;
 use crate::providers::eddsa::EddsaTaskId;
 use crate::providers::robust_ecdsa::RobustEcdsaTaskId;
 use crate::providers::EcdsaTaskId;
@@ -211,6 +212,7 @@ pub enum MpcTaskId {
     EddsaTaskId(EddsaTaskId),
     CKDTaskId(CKDTaskId),
     RobustEcdsaTaskId(RobustEcdsaTaskId),
+    DilithiumTaskId(DilithiumTaskId),
 }
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]

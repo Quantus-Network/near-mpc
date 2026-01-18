@@ -22,6 +22,12 @@ pub enum DBCol {
     SignRequest,
     CKDRequest,
     EpochData,
+    /// Derived Dilithium keyshares, indexed by (domain_id, tweak).
+    /// These are generated via DKG when users call register_dilithium_key.
+    DilithiumDerivedShare,
+    /// Dilithium key registration requests, indexed by request ID.
+    /// These track pending key registration requests from the chain.
+    DilithiumKeyRegistrationRequest,
 }
 
 impl DBCol {
@@ -32,16 +38,20 @@ impl DBCol {
             DBCol::SignRequest => "sign_request",
             DBCol::CKDRequest => "ckd_request",
             DBCol::EpochData => "epoch_id",
+            DBCol::DilithiumDerivedShare => "dilithium_derived_share",
+            DBCol::DilithiumKeyRegistrationRequest => "dilithium_key_registration_request",
         }
     }
 
-    fn all() -> [DBCol; 5] {
+    fn all() -> [DBCol; 7] {
         [
             DBCol::Triple,
             DBCol::Presignature,
             DBCol::SignRequest,
             DBCol::CKDRequest,
             DBCol::EpochData,
+            DBCol::DilithiumDerivedShare,
+            DBCol::DilithiumKeyRegistrationRequest,
         ]
     }
 }

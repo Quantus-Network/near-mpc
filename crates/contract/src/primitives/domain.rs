@@ -40,6 +40,7 @@ pub enum SignatureScheme {
     Ed25519,
     Bls12381,
     V2Secp256k1, // Robust ECDSA
+    Dilithium,   // ML-DSA-87 post-quantum threshold signatures
 }
 
 impl Default for SignatureScheme {
@@ -226,14 +227,18 @@ pub mod tests {
                 id: DomainId(3),
                 scheme: SignatureScheme::V2Secp256k1,
             },
+            DomainConfig {
+                id: DomainId(4),
+                scheme: SignatureScheme::Dilithium,
+            },
         ];
         let new_registry = new_registry.add_domains(domains2.clone()).unwrap();
         assert_eq!(&new_registry.domains[0..2], &domains1);
-        assert_eq!(&new_registry.domains[2..4], &domains2);
+        assert_eq!(&new_registry.domains[2..5], &domains2);
 
         // This fails because the domain ID does not start from next_domain_id.
         let domains3 = vec![DomainConfig {
-            id: DomainId(5),
+            id: DomainId(6),
             scheme: SignatureScheme::Secp256k1,
         }];
         assert!(new_registry.add_domains(domains3).is_err());
@@ -241,11 +246,11 @@ pub mod tests {
         // This fails because the domain IDs are not sorted.
         let domains4 = vec![
             DomainConfig {
-                id: DomainId(5),
+                id: DomainId(6),
                 scheme: SignatureScheme::Secp256k1,
             },
             DomainConfig {
-                id: DomainId(4),
+                id: DomainId(5),
                 scheme: SignatureScheme::Secp256k1,
             },
         ];
@@ -328,5 +333,45 @@ pub mod tests {
         let domain_config: DomainConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(domain_config.id, DomainId(3));
         assert_eq!(domain_config.scheme, SignatureScheme::Secp256k1);
+    }
+
+    #[test]
+    fn test_dilithium_serialization_format() {
+        let domain_config = DomainConfig {
+            id: DomainId(5),
+            scheme: SignatureScheme::Dilithium,
+        };
+        let json = serde_json::to_string(&domain_config).unwrap();
+        assert_eq!(json, r#"{"id":5,"scheme":"Dilithium"}"#);
+
+        let domain_config: DomainConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(domain_config.id, DomainId(5));
+        assert_eq!(domain_config.scheme, SignatureScheme::Dilithium);
+    }
+
+    #[test]
+    fn test_most_recent_domain_for_dilithium() {
+        let registry = DomainRegistry::from_raw_validated(
+            vec![
+                DomainConfig {
+                    id: DomainId(0),
+                    scheme: SignatureScheme::Secp256k1,
+                },
+                DomainConfig {
+                    id: DomainId(1),
+                    scheme: SignatureScheme::Dilithium,
+                },
+                DomainConfig {
+                    id: DomainId(2),
+                    scheme: SignatureScheme::Dilithium,
+                },
+            ],
+            3,
+        )
+        .unwrap();
+        assert_eq!(
+            registry.most_recent_domain_for_protocol(SignatureScheme::Dilithium),
+            Some(DomainId(2))
+        );
     }
 }

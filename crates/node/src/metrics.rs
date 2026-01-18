@@ -138,6 +138,34 @@ pub static MPC_NUM_CKD_RESPONSES_INDEXED: LazyLock<prometheus::IntCounter> = Laz
     .unwrap()
 });
 
+pub static MPC_NUM_DILITHIUM_KEY_REGISTRATIONS_INDEXED: LazyLock<prometheus::IntCounter> =
+    LazyLock::new(|| {
+        prometheus::register_int_counter!(
+            "mpc_num_dilithium_key_registrations_indexed",
+            "Number of Dilithium key registration requests seen by the indexer"
+        )
+        .unwrap()
+    });
+
+pub static MPC_NUM_DILITHIUM_KEY_RESPONSES_INDEXED: LazyLock<prometheus::IntCounter> =
+    LazyLock::new(|| {
+        prometheus::register_int_counter!(
+            "mpc_num_dilithium_key_responses_indexed",
+            "Number of Dilithium key registration responses seen by the indexer"
+        )
+        .unwrap()
+    });
+
+pub static MPC_NUM_DILITHIUM_KEY_COMPUTATIONS_LED: LazyLock<prometheus::IntCounterVec> =
+    LazyLock::new(|| {
+        prometheus::register_int_counter_vec!(
+            "mpc_num_dilithium_key_computations_led",
+            "Number of Dilithium key registration DKG computations that this node led",
+            &["result"],
+        )
+        .unwrap()
+    });
+
 pub static MPC_NUM_SIGNATURE_COMPUTATIONS_LED: LazyLock<prometheus::IntCounterVec> =
     LazyLock::new(|| {
         prometheus::register_int_counter_vec!(
@@ -245,6 +273,15 @@ pub static CKD_REQUEST_CHANNEL_FAILED: LazyLock<prometheus::IntCounter> = LazyLo
     )
     .unwrap()
 });
+
+pub static DILITHIUM_KEY_REGISTRATION_CHANNEL_FAILED: LazyLock<prometheus::IntCounter> =
+    LazyLock::new(|| {
+        prometheus::register_int_counter!(
+            "dilithium_key_registration_channel_failed",
+            "failed to send on channel in dilithium_key_registration_channel",
+        )
+        .unwrap()
+    });
 
 pub static NETWORK_LIVE_CONNECTIONS: LazyLock<prometheus::IntGaugeVec> = LazyLock::new(|| {
     prometheus::register_int_gauge_vec!(

@@ -9,6 +9,7 @@ use mpc_contract::{
     },
 };
 use rand::rngs::OsRng;
+use rand::RngCore;
 use rand_core::CryptoRngCore;
 use threshold_signatures::{
     blstrs,
@@ -17,6 +18,17 @@ use threshold_signatures::{
     frost_ed25519::{keys::SigningShare, Ed25519Group, Group as _, VerifyingKey},
     frost_secp256k1::{self, Secp256K1Group},
 };
+
+// Dilithium types - use base crate for sandbox tests since we don't have full MPC
+pub use qp_rusty_crystals_dilithium::{
+    ml_dsa_87::{
+        Keypair as DilithiumKeypair,
+        PublicKey as DilithiumPublicKeyBase,
+        SecretKey as DilithiumSecretKey,
+    },
+    SensitiveBytes32,
+};
+pub use qp_rusty_crystals_threshold::PublicKey as DilithiumPublicKey;
 
 #[derive(Debug, Clone)]
 pub struct DomainKey {
@@ -36,6 +48,15 @@ pub enum SharedSecretKey {
     Secp256k1(ts_ecdsa::KeygenOutput),
     Ed25519(eddsa::KeygenOutput),
     Bls12381(ckd::KeygenOutput),
+Dilithium(DilithiumKeygenOutput),
+}
+
+/// Keygen output for Dilithium signatures (for sandbox tests).
+/// This uses the base dilithium crate directly since we don't need full MPC in contract tests.
+#[derive(Debug, Clone)]
+pub struct DilithiumKeygenOutput {
+    pub public_key_bytes: [u8; 2592],
+    pub secret_key_bytes: [u8; 4896],
 }
 
 pub fn new_secp256k1() -> (dtos::PublicKey, ts_ecdsa::KeygenOutput) {
@@ -71,6 +92,10 @@ pub fn make_key_for_domain(domain_scheme: SignatureScheme) -> (dtos::PublicKey, 
             let (pk, sk) = new_bls12381();
             (pk, SharedSecretKey::Bls12381(sk))
         }
+        SignatureScheme::Dilithium => {
+            let (pk, sk) = new_dilithium();
+            (pk, SharedSecretKey::Dilithium(sk))
+        }
     }
 }
 
@@ -91,6 +116,45 @@ pub fn new_ed25519() -> (dtos::PublicKey, eddsa::KeygenOutput) {
     let pk = dtos::PublicKey::Ed25519(dtos::Ed25519PublicKey::from(bytes));
 
     (pk, keygen_output)
+}
+
+/// Generate a new Dilithium key pair for sandbox tests.
+/// Uses the base dilithium crate directly since we don't need full MPC infrastructure.
+pub fn new_dilithium() -> (dtos::PublicKey, DilithiumKeygenOutput) {
+    let mut seed = [0u8; 32];
+    OsRng.fill_bytes(&mut seed);
+
+    // Generate a keypair using the base dilithium crate
+    let entropy = SensitiveBytes32::new(&mut seed);
+    let keypair = DilithiumKeypair::generate(entropy);
+
+    let keygen_output = DilithiumKeygenOutput {
+        public_key_bytes: keypair.public.to_bytes(),
+        secret_key_bytes: keypair.secret.to_bytes(),
+    };
+
+    // Convert public key to contract interface type
+    let mut boxed_bytes = Box::new([0u8; 2592]);
+    boxed_bytes.copy_from_slice(&keypair.public.to_bytes());
+    let pk = dtos::PublicKey::Dilithium(dtos::DilithiumPublicKey::from(boxed_bytes));
+
+    (pk, keygen_output)
+}
+
+/// Sign a message with a Dilithium key for sandbox tests.
+/// Uses the base dilithium crate directly.
+pub fn sign_with_dilithium(
+    keygen_output: &DilithiumKeygenOutput,
+    message: &[u8],
+) -> Vec<u8> {
+    let secret_key = DilithiumSecretKey::from_bytes(&keygen_output.secret_key_bytes)
+        .expect("Valid secret key");
+
+    // Sign with empty context (matching the NEAR MPC implementation)
+    let signature = secret_key.sign(message, None, None)
+        .expect("Signing should succeed");
+
+    signature.to_vec()
 }
 
 pub fn new_bls12381() -> (dtos::PublicKey, ckd::KeygenOutput) {

@@ -15,10 +15,15 @@ const DEFAULT_CONTRACT_UPGRADE_DEPOSIT_TERA_GAS: u64 = 50;
 const DEFAULT_SIGN_CALL_GAS_ATTACHMENT_REQUIREMENT_TERA_GAS: u64 = 15;
 /// Gas required for a CKD request
 const DEFAULT_CKD_CALL_GAS_ATTACHMENT_REQUIREMENT_TERA_GAS: u64 = 15;
+/// Gas required for a Dilithium key registration request
+/// This is higher than sign because DKG takes longer than signing
+const DEFAULT_DILITHIUM_KEY_REGISTRATION_GAS_ATTACHMENT_REQUIREMENT_TERA_GAS: u64 = 20;
 /// Prepaid gas for a `return_signature_and_clean_state_on_success` call
 const DEFAULT_RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_TERA_GAS: u64 = 7;
 /// Prepaid gas for a `return_ck_and_clean_state_on_success` call
 const DEFAULT_RETURN_CK_AND_CLEAN_STATE_ON_SUCCESS_CALL_TERA_GAS: u64 = 7;
+/// Prepaid gas for a `return_dilithium_key_and_store` call
+const DEFAULT_RETURN_DILITHIUM_KEY_AND_STORE_CALL_TERA_GAS: u64 = 10;
 /// Prepaid gas for a `fail_on_timeout` call
 const DEFAULT_FAIL_ON_TIMEOUT_TERA_GAS: u64 = 2;
 /// Prepaid gas for a `clean_tee_status` call
@@ -44,10 +49,14 @@ pub(crate) struct Config {
     pub(crate) sign_call_gas_attachment_requirement_tera_gas: u64,
     /// Gas required for a CKD request.
     pub(crate) ckd_call_gas_attachment_requirement_tera_gas: u64,
+    /// Gas required for a Dilithium key registration request.
+    pub(crate) dilithium_key_registration_gas_attachment_requirement_tera_gas: u64,
     /// Prepaid gas for a `return_signature_and_clean_state_on_success` call.
     pub(crate) return_signature_and_clean_state_on_success_call_tera_gas: u64,
     /// Prepaid gas for a `return_ck_and_clean_state_on_success` call.
     pub(crate) return_ck_and_clean_state_on_success_call_tera_gas: u64,
+    /// Prepaid gas for a `return_dilithium_key_and_store` call.
+    pub(crate) return_dilithium_key_and_store_call_tera_gas: u64,
     /// Prepaid gas for a `fail_on_timeout` call.
     pub(crate) fail_on_timeout_tera_gas: u64,
     /// Prepaid gas for a `clean_tee_status` call.
@@ -68,10 +77,14 @@ impl Default for Config {
                 DEFAULT_SIGN_CALL_GAS_ATTACHMENT_REQUIREMENT_TERA_GAS,
             ckd_call_gas_attachment_requirement_tera_gas:
                 DEFAULT_CKD_CALL_GAS_ATTACHMENT_REQUIREMENT_TERA_GAS,
+            dilithium_key_registration_gas_attachment_requirement_tera_gas:
+                DEFAULT_DILITHIUM_KEY_REGISTRATION_GAS_ATTACHMENT_REQUIREMENT_TERA_GAS,
             return_signature_and_clean_state_on_success_call_tera_gas:
                 DEFAULT_RETURN_SIGNATURE_AND_CLEAN_STATE_ON_SUCCESS_CALL_TERA_GAS,
             return_ck_and_clean_state_on_success_call_tera_gas:
                 DEFAULT_RETURN_CK_AND_CLEAN_STATE_ON_SUCCESS_CALL_TERA_GAS,
+            return_dilithium_key_and_store_call_tera_gas:
+                DEFAULT_RETURN_DILITHIUM_KEY_AND_STORE_CALL_TERA_GAS,
             fail_on_timeout_tera_gas: DEFAULT_FAIL_ON_TIMEOUT_TERA_GAS,
             clean_tee_status_tera_gas: DEFAULT_CLEAN_TEE_STATUS_TERA_GAS,
             cleanup_orphaned_node_migrations_tera_gas:

@@ -6,6 +6,7 @@ const ED25519_PUBLIC_KEY_SIZE: usize = 32;
 const SECP256K1_PUBLIC_KEY_SIZE: usize = 64;
 const BLS12381G1_PUBLIC_KEY_SIZE: usize = 48;
 const BLS12381G2_PUBLIC_KEY_SIZE: usize = 96;
+const DILITHIUM_PUBLIC_KEY_SIZE: usize = 2592; // ML-DSA-87
 
 #[derive(
     Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, From, BorshSerialize, BorshDeserialize,
@@ -18,6 +19,7 @@ pub enum PublicKey {
     Secp256k1(Secp256k1PublicKey),
     Ed25519(Ed25519PublicKey),
     Bls12381(Bls12381G2PublicKey),
+    Dilithium(DilithiumPublicKey),
 }
 
 #[derive(
@@ -96,6 +98,26 @@ pub struct Bls12381G2PublicKey(pub [u8; BLS12381G2_PUBLIC_KEY_SIZE]);
 )]
 pub struct Bls12381G1PublicKey(pub [u8; BLS12381G1_PUBLIC_KEY_SIZE]);
 
+/// ML-DSA-87 (Dilithium) public key for post-quantum threshold signatures.
+#[derive(
+    Debug,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Deref,
+    From,
+    BorshSerialize,
+    BorshDeserialize,
+)]
+#[cfg_attr(
+    all(feature = "abi", not(target_arch = "wasm32")),
+    derive(borsh::BorshSchema)
+)]
+pub struct DilithiumPublicKey(pub Box<[u8; DILITHIUM_PUBLIC_KEY_SIZE]>);
+
 #[derive(Debug, thiserror::Error)]
 pub enum ParsePublicKeyError {
     #[error("missing ':' separator")]
@@ -153,6 +175,21 @@ impl schemars::JsonSchema for Bls12381G2PublicKey {
     }
 }
 
+#[cfg(all(feature = "abi", not(target_arch = "wasm32")))]
+impl schemars::JsonSchema for DilithiumPublicKey {
+    fn is_referenceable() -> bool {
+        true
+    }
+
+    fn schema_name() -> String {
+        "DilithiumPublicKey".to_string()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::schema::Schema {
+        String::json_schema(generator)
+    }
+}
+
 impl Ed25519PublicKey {
     pub fn as_bytes(&self) -> &[u8; ED25519_PUBLIC_KEY_SIZE] {
         &self.0
@@ -201,12 +238,25 @@ impl AsRef<[u8]> for Bls12381G2PublicKey {
     }
 }
 
+impl DilithiumPublicKey {
+    pub fn as_bytes(&self) -> &[u8; DILITHIUM_PUBLIC_KEY_SIZE] {
+        &self.0
+    }
+}
+
+impl AsRef<[u8]> for DilithiumPublicKey {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
 impl From<&PublicKey> for String {
     fn from(str_public_key: &PublicKey) -> Self {
         match str_public_key {
             PublicKey::Secp256k1(inner) => String::from(inner),
             PublicKey::Ed25519(inner) => String::from(inner),
             PublicKey::Bls12381(inner) => String::from(inner),
+            PublicKey::Dilithium(inner) => String::from(inner),
         }
     }
 }
@@ -235,6 +285,12 @@ impl From<&Bls12381G2PublicKey> for String {
     }
 }
 
+impl From<&DilithiumPublicKey> for String {
+    fn from(str_public_key: &DilithiumPublicKey) -> Self {
+        ["dilithium:", &bs58::encode(str_public_key.as_ref()).into_string()].concat()
+    }
+}
+
 impl std::str::FromStr for PublicKey {
     type Err = ParsePublicKeyError;
 
@@ -245,6 +301,7 @@ impl std::str::FromStr for PublicKey {
                 "ed25519" => Ok(Self::Ed25519(Ed25519PublicKey::from_str(value)?)),
                 "secp256k1" => Ok(Self::Secp256k1(Secp256k1PublicKey::from_str(value)?)),
                 "bls12381g2" => Ok(Self::Bls12381(Bls12381G2PublicKey::from_str(value)?)),
+                "dilithium" => Ok(Self::Dilithium(DilithiumPublicKey::from_str(value)?)),
                 _ => Err(ParsePublicKeyError::WrongPrefix),
             }
         } else {
@@ -338,6 +395,28 @@ impl std::str::FromStr for Bls12381G2PublicKey {
             .try_into()
             .map_err(|_| ParsePublicKeyError::InvalidKeyLength)?;
         Ok(Self(bytes))
+    }
+}
+
+impl std::str::FromStr for DilithiumPublicKey {
+    type Err = ParsePublicKeyError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let Some((prefix, key_data)) = value.split_once(':') else {
+            return Err(ParsePublicKeyError::MissingSeparator);
+        };
+
+        if prefix != "dilithium" {
+            return Err(ParsePublicKeyError::WrongPrefix);
+        }
+
+        let data = bs58::decode(&key_data)
+            .into_vec()
+            .map_err(|_| ParsePublicKeyError::InvalidBs58Encoding)?;
+        let bytes: [u8; DILITHIUM_PUBLIC_KEY_SIZE] = data
+            .try_into()
+            .map_err(|_| ParsePublicKeyError::InvalidKeyLength)?;
+        Ok(Self(Box::new(bytes)))
     }
 }
 
@@ -440,9 +519,93 @@ impl<'de> serde::Deserialize<'de> for Bls12381G2PublicKey {
     }
 }
 
+impl serde::Serialize for DilithiumPublicKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&String::from(self))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DilithiumPublicKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s: String = serde::Deserialize::deserialize(deserializer)?;
+        s.parse::<DilithiumPublicKey>()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_dilithium_public_key_roundtrip() {
+        // Create a test key with known data
+        let key_bytes = [0x42u8; DILITHIUM_PUBLIC_KEY_SIZE];
+        let pk = DilithiumPublicKey(Box::new(key_bytes));
+
+        // Convert to string
+        let pk_string = String::from(&pk);
+        assert!(pk_string.starts_with("dilithium:"));
+
+        // Parse back
+        let parsed: DilithiumPublicKey = pk_string.parse().unwrap();
+        assert_eq!(parsed.as_bytes(), &key_bytes);
+    }
+
+    #[test]
+    fn test_dilithium_public_key_in_enum() {
+        let key_bytes = [0x42u8; DILITHIUM_PUBLIC_KEY_SIZE];
+        let pk = PublicKey::Dilithium(DilithiumPublicKey(Box::new(key_bytes)));
+
+        // Convert to string
+        let pk_string = String::from(&pk);
+        assert!(pk_string.starts_with("dilithium:"));
+
+        // Parse back through the enum
+        let parsed: PublicKey = pk_string.parse().unwrap();
+        match parsed {
+            PublicKey::Dilithium(inner) => {
+                assert_eq!(inner.as_bytes(), &key_bytes);
+            }
+            _ => panic!("Expected Dilithium variant"),
+        }
+    }
+
+    #[test]
+    fn test_dilithium_public_key_serde() {
+        let key_bytes = [0x42u8; DILITHIUM_PUBLIC_KEY_SIZE];
+        let pk = DilithiumPublicKey(Box::new(key_bytes));
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&pk).unwrap();
+
+        // Deserialize back
+        let parsed: DilithiumPublicKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.as_bytes(), &key_bytes);
+    }
+
+    #[test]
+    fn test_dilithium_public_key_invalid_length() {
+        // Too short
+        let short_key = "dilithium:abc123";
+        let result = short_key.parse::<DilithiumPublicKey>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_dilithium_public_key_wrong_prefix() {
+        let key_bytes = [0x42u8; DILITHIUM_PUBLIC_KEY_SIZE];
+        let encoded = bs58::encode(&key_bytes).into_string();
+        let wrong_prefix = format!("ed25519:{}", encoded);
+        let result = wrong_prefix.parse::<DilithiumPublicKey>();
+        assert!(matches!(result, Err(ParsePublicKeyError::WrongPrefix)));
+    }
 
     #[test]
     fn test_assert_near_public_key_sizes() {

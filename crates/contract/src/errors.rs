@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use crate::primitives::{domain::DomainId, key_state::EpochId};
+use near_account_id::AccountId;
 mod impls;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -45,6 +46,8 @@ pub enum RespondError {
     DomainNotFound,
     #[error("The provided tweak is not on the curve of the public key.")]
     TweakNotOnCurve,
+    #[error("The Dilithium derived key was not found. Registration may not have completed.")]
+    DilithiumDerivedKeyNotFound,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
@@ -124,6 +127,10 @@ pub enum InvalidParameters {
     InvalidTlsPublicKey,
     #[error("Caller is not the signer account.")]
     CallerNotSigner,
+    #[error("Dilithium key not registered for account {account} with path '{path}'. Call register_dilithium_key first.")]
+    DilithiumKeyNotRegistered { account: AccountId, path: String },
+    #[error("The provided domain is not a Dilithium domain.")]
+    NotDilithiumDomain,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]

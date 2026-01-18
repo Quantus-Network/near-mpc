@@ -281,3 +281,20 @@ impl IntoContractInterfaceType<dtos::Bls12381G1PublicKey> for &ckd::ElementG1 {
         dtos::Bls12381G1PublicKey::from(self.to_compressed())
     }
 }
+
+impl IntoContractInterfaceType<dtos::PublicKey> for qp_rusty_crystals_threshold::PublicKey {
+    fn into_contract_interface_type(self) -> dtos::PublicKey {
+        let bytes = self.as_bytes();
+        let mut boxed_bytes = Box::new([0u8; 2592]);
+        boxed_bytes.copy_from_slice(bytes);
+        dtos::PublicKey::Dilithium(dtos::DilithiumPublicKey::from(boxed_bytes))
+    }
+}
+
+impl TryIntoNodeType<qp_rusty_crystals_threshold::PublicKey> for dtos::DilithiumPublicKey {
+    type Error = ParsePublicKeyError;
+    fn try_into_node_type(self) -> Result<qp_rusty_crystals_threshold::PublicKey, ParsePublicKeyError> {
+        qp_rusty_crystals_threshold::PublicKey::from_bytes(self.as_ref())
+            .map_err(|_| ParsePublicKeyError {})
+    }
+}

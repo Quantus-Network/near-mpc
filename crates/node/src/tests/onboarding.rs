@@ -22,6 +22,7 @@ use mpc_contract::state::ProtocolContractState;
 use near_o11y::testonly::init_integration_logger;
 use near_time::Clock;
 use rand::rngs::OsRng;
+use serial_test::serial;
 
 use super::OneNodeTestConfig;
 
@@ -65,6 +66,7 @@ impl MigrationTestNodeInfo {
 /// After the conclusion of the key initialization and passing of a sanity check, the participant
 /// set will be forcefully changed.
 #[tokio::test]
+#[serial]
 async fn test_onboarding() {
     init_integration_logger();
     const NUM_PARTICIPANTS: usize = 2;

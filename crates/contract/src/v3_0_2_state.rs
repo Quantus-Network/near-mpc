@@ -19,6 +19,7 @@ use crate::{
         signature::{SignatureRequest, YieldIndex},
     },
     state::ProtocolContractState,
+    storage_keys::StorageKey,
     tee::tee_state::TeeState,
     update::{Update, UpdateId},
 };
@@ -105,6 +106,9 @@ impl From<MpcContract> for crate::MpcContract {
             protocol_state: value.protocol_state,
             pending_signature_requests: value.pending_signature_requests,
             pending_ckd_requests: value.pending_ckd_requests,
+            // Initialize new Dilithium storage fields (empty on migration)
+            pending_dilithium_key_requests: LookupMap::new(StorageKey::PendingDilithiumKeyRequests),
+            dilithium_derived_keys: LookupMap::new(StorageKey::DilithiumDerivedKeys),
             proposed_updates: value.proposed_updates.into(),
             config: value.config.into(),
             tee_state: value.tee_state,

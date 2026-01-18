@@ -17,4 +17,11 @@ pub enum StorageKey {
     PendingCKDRequests,
     BackupServicesInfo,
     NodeMigrations,
+    /// Storage for registered Dilithium derived public keys.
+    /// Maps DilithiumTweakKeyId (tweak, domain) -> DilithiumPublicKey
+    /// The tweak is deterministically derived from (account_id, path).
+    DilithiumDerivedKeys,
+    /// Storage for pending Dilithium key registration requests.
+    /// Maps DilithiumKeyRegistration -> YieldIndex
+    PendingDilithiumKeyRequests,
 }

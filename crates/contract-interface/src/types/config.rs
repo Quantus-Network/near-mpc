@@ -35,6 +35,10 @@ pub struct InitConfig {
     pub return_signature_and_clean_state_on_success_call_tera_gas: Option<u64>,
     /// Prepaid gas for a `return_ck_and_clean_state_on_success` call.
     pub return_ck_and_clean_state_on_success_call_tera_gas: Option<u64>,
+    /// Gas required for a Dilithium key registration request.
+    pub dilithium_key_registration_gas_attachment_requirement_tera_gas: Option<u64>,
+    /// Prepaid gas for a `return_dilithium_key_and_store` call.
+    pub return_dilithium_key_and_store_call_tera_gas: Option<u64>,
     /// Prepaid gas for a `fail_on_timeout` call.
     pub fail_on_timeout_tera_gas: Option<u64>,
     /// Prepaid gas for a `clean_tee_status` call.
@@ -79,6 +83,10 @@ pub struct Config {
     pub return_signature_and_clean_state_on_success_call_tera_gas: u64,
     /// Prepaid gas for a `return_ck_and_clean_state_on_success` call.
     pub return_ck_and_clean_state_on_success_call_tera_gas: u64,
+    /// Gas required for a Dilithium key registration request.
+    pub dilithium_key_registration_gas_attachment_requirement_tera_gas: u64,
+    /// Prepaid gas for a `return_dilithium_key_and_store` call.
+    pub return_dilithium_key_and_store_call_tera_gas: u64,
     /// Prepaid gas for a `fail_on_timeout` call.
     pub fail_on_timeout_tera_gas: u64,
     /// Prepaid gas for a `clean_tee_status` call.
@@ -104,6 +112,8 @@ mod tests {
             ckd_call_gas_attachment_requirement_tera_gas: Some(15),
             return_signature_and_clean_state_on_success_call_tera_gas: Some(7),
             return_ck_and_clean_state_on_success_call_tera_gas: Some(7),
+            dilithium_key_registration_gas_attachment_requirement_tera_gas: Some(20),
+            return_dilithium_key_and_store_call_tera_gas: Some(10),
             fail_on_timeout_tera_gas: Some(2),
             clean_tee_status_tera_gas: Some(10),
             cleanup_orphaned_node_migrations_tera_gas: Some(3),
@@ -151,6 +161,8 @@ mod tests {
             ckd_call_gas_attachment_requirement_tera_gas: None,
             return_signature_and_clean_state_on_success_call_tera_gas: None,
             return_ck_and_clean_state_on_success_call_tera_gas: None,
+            dilithium_key_registration_gas_attachment_requirement_tera_gas: None,
+            return_dilithium_key_and_store_call_tera_gas: None,
             fail_on_timeout_tera_gas: None,
             clean_tee_status_tera_gas: None,
             cleanup_orphaned_node_migrations_tera_gas: None,

@@ -1,3 +1,4 @@
+use crate::indexer::handler::DilithiumKeyRegistrationFromChain;
 use crate::{types::CKDRequest, types::SignatureRequest};
 use anyhow::Context;
 use contract_interface::types as dtos;
@@ -9,6 +10,7 @@ use k256::{
 use mpc_contract::{
     crypto_shared::CKDResponse,
     primitives::{
+        dilithium_derivation::{DilithiumKeyRegistration, DilithiumKeyResponse},
         domain::DomainId,
         key_state::{KeyEventId, Keyset},
         signature::Tweak,
@@ -81,8 +83,8 @@ impl ChainCKDRequest {
 pub type ChainSignatureResponse = mpc_contract::crypto_shared::SignatureResponse;
 pub type ChainCKDResponse = mpc_contract::crypto_shared::CKDResponse;
 
+use mpc_contract::crypto_shared::ed25519_types;
 pub use mpc_contract::crypto_shared::k256_types;
-use mpc_contract::crypto_shared::{ed25519_types, SignatureResponse};
 use mpc_contract::primitives::signature::Payload;
 
 const MAX_RECOVERY_ID: u8 = 3;
@@ -125,6 +127,52 @@ pub struct ChainCKDRespondArgs {
 }
 
 impl ChainRespondArgs for ChainCKDRespondArgs {}
+
+/* These arguments are passed to the `respond_dilithium_key` function.
+ * It takes the registration details and the derived public key from DKG.
+ */
+#[derive(Serialize, Debug, Deserialize, Clone)]
+pub struct ChainDilithiumKeyRespondArgs {
+    pub registration: DilithiumKeyRegistration,
+    pub response: DilithiumKeyResponse,
+}
+
+impl ChainRespondArgs for ChainDilithiumKeyRespondArgs {}
+
+impl ChainDilithiumKeyRespondArgs {
+    /// Create response args for a Dilithium key registration.
+    ///
+    /// The public key is the result of running DKG with the derived tweak.
+    /// It must be exactly 2592 bytes (ML-DSA-87 public key size).
+    pub fn new(
+        request: &DilithiumKeyRegistrationFromChain,
+        public_key: &qp_rusty_crystals_threshold::PublicKey,
+    ) -> anyhow::Result<Self> {
+        // Convert threshold library's PublicKey to contract interface's DilithiumPublicKey
+        let pk_bytes = public_key.as_bytes();
+        if pk_bytes.len() != 2592 {
+            anyhow::bail!(
+                "Invalid Dilithium public key size: expected 2592, got {}",
+                pk_bytes.len()
+            );
+        }
+        let mut boxed_bytes = Box::new([0u8; 2592]);
+        boxed_bytes.copy_from_slice(pk_bytes);
+        let dto_public_key = dtos::DilithiumPublicKey::from(boxed_bytes);
+
+        Ok(ChainDilithiumKeyRespondArgs {
+            registration: DilithiumKeyRegistration {
+                tweak: request.tweak.clone(),
+                domain_id: request.domain_id,
+                account_id: request.predecessor_id.clone(),
+                path: request.path.clone(),
+            },
+            response: DilithiumKeyResponse {
+                public_key: dto_public_key,
+            },
+        })
+    }
+}
 
 #[derive(Serialize, Debug)]
 pub struct ChainGetPendingSignatureRequestArgs {
@@ -183,6 +231,7 @@ pub struct ConcludeNodeMigrationArgs {
 pub enum ChainSendTransactionRequest {
     Respond(ChainSignatureRespondArgs),
     CKDRespond(ChainCKDRespondArgs),
+    DilithiumKeyRespond(ChainDilithiumKeyRespondArgs),
     VotePk(ChainVotePkArgs),
     StartKeygen(ChainStartKeygenArgs),
     VoteReshared(ChainVoteResharedArgs),
@@ -205,6 +254,7 @@ impl ChainSendTransactionRequest {
         match self {
             ChainSendTransactionRequest::Respond(_) => "respond",
             ChainSendTransactionRequest::CKDRespond(_) => "respond_ckd",
+            ChainSendTransactionRequest::DilithiumKeyRespond(_) => "respond_dilithium_key",
             ChainSendTransactionRequest::VotePk(_) => "vote_pk",
             ChainSendTransactionRequest::VoteReshared(_) => "vote_reshared",
             ChainSendTransactionRequest::StartReshare(_) => "start_reshare_instance",
@@ -222,6 +272,7 @@ impl ChainSendTransactionRequest {
         match self {
             Self::Respond(_)
             | Self::CKDRespond(_)
+            | Self::DilithiumKeyRespond(_)
             | Self::VotePk(_)
             | Self::VoteReshared(_)
             | Self::StartReshare(_)
@@ -274,8 +325,25 @@ impl ChainSignatureRespondArgs {
                 request.payload.clone(),
                 request.domain,
             ),
-            response: SignatureResponse::Ed25519 {
+            response: ChainSignatureResponse::Ed25519 {
                 signature: ed25519_types::Signature::new(response),
+            },
+        })
+    }
+
+    /// Creates response args for a Dilithium (ML-DSA-87) signature
+    pub fn new_dilithium(
+        request: &SignatureRequest,
+        signature: &qp_rusty_crystals_threshold::Signature,
+    ) -> anyhow::Result<Self> {
+        Ok(ChainSignatureRespondArgs {
+            request: ChainSignatureRequest::new(
+                request.tweak.clone(),
+                request.payload.clone(),
+                request.domain,
+            ),
+            response: ChainSignatureResponse::Dilithium {
+                signature: signature.as_bytes().to_vec(),
             },
         })
     }

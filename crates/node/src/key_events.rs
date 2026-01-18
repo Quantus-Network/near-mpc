@@ -4,6 +4,7 @@ use crate::indexer::types::{
     ChainStartKeygenArgs, ChainStartReshareArgs, ChainVoteAbortKeyEventInstanceArgs,
 };
 use crate::network::MeshNetworkClient;
+use crate::providers::dilithium::DilithiumSignatureProvider;
 use crate::providers::eddsa::{EddsaSignatureProvider, EddsaTaskId};
 use crate::providers::EcdsaTaskId;
 use crate::tracking::AutoAbortTaskCollection;
@@ -81,6 +82,12 @@ pub async fn keygen_computation_inner(
             let keyshare = CKDProvider::run_key_generation_client(threshold, channel).await?;
             let public_key = keyshare.public_key.into_contract_interface_type();
             (KeyshareData::Bls12381(keyshare), public_key)
+        }
+        SignatureScheme::Dilithium => {
+            let keyshare =
+                DilithiumSignatureProvider::run_key_generation_client(threshold, channel).await?;
+            let public_key = keyshare.public_key.clone().into_contract_interface_type();
+            (KeyshareData::Dilithium(Box::new(keyshare)), public_key)
         }
     };
 
@@ -285,6 +292,24 @@ async fn resharing_computation_inner(
             )
             .await?;
             KeyshareData::Bls12381(res)
+        }
+        (dtos::PublicKey::Dilithium(inner_public_key), SignatureScheme::Dilithium) => {
+            let public_key = inner_public_key.try_into_node_type()?;
+            let my_share = existing_keyshare
+                .map(|keyshare| match keyshare.data {
+                    KeyshareData::Dilithium(data) => Ok(data.private_share.clone()),
+                    _ => Err(anyhow::anyhow!("Expected Dilithium keyshare!")),
+                })
+                .transpose()?;
+            let res = DilithiumSignatureProvider::run_key_resharing_client(
+                args.new_threshold,
+                my_share,
+                public_key,
+                &args.old_participants,
+                channel,
+            )
+            .await?;
+            KeyshareData::Dilithium(Box::new(res))
         }
         (public_key, scheme) => {
             return Err(anyhow::anyhow!(

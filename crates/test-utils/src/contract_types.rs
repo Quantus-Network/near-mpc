@@ -8,9 +8,11 @@ pub fn dummy_config(value: u64) -> contract_interface::types::Config {
         ckd_call_gas_attachment_requirement_tera_gas: value + 4,
         return_signature_and_clean_state_on_success_call_tera_gas: value + 5,
         return_ck_and_clean_state_on_success_call_tera_gas: value + 6,
-        fail_on_timeout_tera_gas: value + 7,
-        clean_tee_status_tera_gas: value + 8,
-        cleanup_orphaned_node_migrations_tera_gas: value + 9,
-        remove_non_participant_update_votes_tera_gas: value + 10,
+        dilithium_key_registration_gas_attachment_requirement_tera_gas: value + 7,
+        return_dilithium_key_and_store_call_tera_gas: value + 8,
+        fail_on_timeout_tera_gas: value + 9,
+        clean_tee_status_tera_gas: value + 10,
+        cleanup_orphaned_node_migrations_tera_gas: value + 11,
+        remove_non_participant_update_votes_tera_gas: value + 12,
     }
 }

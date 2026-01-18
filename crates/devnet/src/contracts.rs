@@ -59,6 +59,12 @@ pub fn make_actions(call: ContractActionCall) -> ActionCall {
                     SignatureScheme::Bls12381 => {
                         ckd_calls_by_domain.insert(domain.id.0, prot_calls);
                     }
+                    SignatureScheme::Dilithium => {
+                        // Dilithium parallel signing requires updating the parallel sign contract
+                        // to add a dilithium_calls_by_domain field. For now, skip Dilithium domains
+                        // in parallel sign mode - they can still be signed individually.
+                        continue;
+                    }
                 }
             }
             ActionCall {
@@ -174,6 +180,13 @@ fn make_payload(scheme: SignatureScheme) -> Payload {
         }
         SignatureScheme::Bls12381 => {
             unreachable!("make_payload should not be called with `Bls12381` scheme")
+        }
+        SignatureScheme::Dilithium => {
+            // Dilithium uses EdDSA-style payload (raw message bytes)
+            let len = rand::random_range(32..=1232);
+            let mut payload = vec![0; len];
+            rand::rng().fill_bytes(&mut payload);
+            Payload::Eddsa(Bytes::new(payload).unwrap())
         }
     }
 }

@@ -1,6 +1,24 @@
+//! TLS configuration for NEAR MPC node-to-node communication.
+//!
+//! # Post-Quantum Security
+//!
+//! This module configures TLS 1.3 with **post-quantum hybrid key exchange** (X25519MLKEM768)
+//! when the `prefer-post-quantum` feature is enabled in rustls. This provides protection
+//! against "harvest now, decrypt later" attacks where an adversary records encrypted
+//! traffic today and decrypts it later using a quantum computer.
+//!
+//! This is especially important for Dilithium (ML-DSA-87) domains, where the entire
+//! point is post-quantum security. Without PQ-secure TLS, an attacker could:
+//! 1. Record all DKG protocol messages
+//! 2. Later decrypt them with a quantum computer
+//! 3. Reconstruct the full secret key from the decrypted shares
+//!
+//! With X25519MLKEM768, even a future quantum computer cannot decrypt past traffic.
+
 use crate::constants;
 use crate::keygen::raw_ed25519_secret_key_to_keypair;
 use anyhow::Context;
+use rustls::crypto::aws_lc_rs;
 use rustls::pki_types::PrivateKeyDer;
 use rustls::{pki_types::PrivatePkcs8KeyDer, server::WebPkiClientVerifier};
 use std::sync::Arc;
@@ -118,6 +136,15 @@ fn client_tls_config(
 ///   - a [`rustls::server::ServerConfig`] that requires client certificates chaining to the dummy root (mTLS),
 ///   - a [`rustls::client::ClientConfig`] that presents the issued peer certificate and trusts the same root.
 ///
+/// # Post-Quantum Key Exchange
+///
+/// When rustls is compiled with the `prefer-post-quantum` feature (and `aws_lc_rs` backend),
+/// the TLS handshake will use **X25519MLKEM768** hybrid key exchange by default. This combines:
+/// - **X25519**: Classical elliptic curve Diffie-Hellman (well-tested, fast)
+/// - **ML-KEM-768**: Post-quantum key encapsulation (NIST FIPS 203 standardized)
+///
+/// The hybrid approach ensures security even if one algorithm is broken.
+///
 /// # Parameters
 /// - `p2p_private_key`: The Ed25519 secret key of this node, used as its identity in P2P handshakes.
 ///
@@ -130,6 +157,12 @@ fn client_tls_config(
 pub fn configure_tls(
     p2p_private_key: &ed25519_dalek::SigningKey,
 ) -> anyhow::Result<(rustls::server::ServerConfig, rustls::client::ClientConfig)> {
+    // Install aws-lc-rs as the crypto provider. This is required when multiple
+    // crypto backends are available (aws-lc-rs and ring). We use aws-lc-rs because
+    // it provides post-quantum key exchange (X25519MLKEM768) support.
+    // The `install_default` call is idempotent - it's safe to call multiple times.
+    let _ = aws_lc_rs::default_provider().install_default();
+
     // Generate a self-signed certificate from the dummy key.
     let dummy_issuer_cert: SelfSignedCert = self_signed_dummy_certificate()?;
     // Add the dummy issuer to the trusted certificate list.

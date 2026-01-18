@@ -468,6 +468,12 @@ impl From<contract_interface::types::InitConfig> for Config {
         if let Some(v) = config_ext.return_ck_and_clean_state_on_success_call_tera_gas {
             config.return_ck_and_clean_state_on_success_call_tera_gas = v;
         }
+        if let Some(v) = config_ext.dilithium_key_registration_gas_attachment_requirement_tera_gas {
+            config.dilithium_key_registration_gas_attachment_requirement_tera_gas = v;
+        }
+        if let Some(v) = config_ext.return_dilithium_key_and_store_call_tera_gas {
+            config.return_dilithium_key_and_store_call_tera_gas = v;
+        }
         if let Some(v) = config_ext.fail_on_timeout_tera_gas {
             config.fail_on_timeout_tera_gas = v;
         }
@@ -499,6 +505,10 @@ impl From<&Config> for contract_interface::types::Config {
                 .return_signature_and_clean_state_on_success_call_tera_gas,
             return_ck_and_clean_state_on_success_call_tera_gas: value
                 .return_ck_and_clean_state_on_success_call_tera_gas,
+            dilithium_key_registration_gas_attachment_requirement_tera_gas: value
+                .dilithium_key_registration_gas_attachment_requirement_tera_gas,
+            return_dilithium_key_and_store_call_tera_gas: value
+                .return_dilithium_key_and_store_call_tera_gas,
             fail_on_timeout_tera_gas: value.fail_on_timeout_tera_gas,
             clean_tee_status_tera_gas: value.clean_tee_status_tera_gas,
             cleanup_orphaned_node_migrations_tera_gas: value
@@ -523,6 +533,10 @@ impl From<contract_interface::types::Config> for Config {
                 .return_signature_and_clean_state_on_success_call_tera_gas,
             return_ck_and_clean_state_on_success_call_tera_gas: value
                 .return_ck_and_clean_state_on_success_call_tera_gas,
+            dilithium_key_registration_gas_attachment_requirement_tera_gas: value
+                .dilithium_key_registration_gas_attachment_requirement_tera_gas,
+            return_dilithium_key_and_store_call_tera_gas: value
+                .return_dilithium_key_and_store_call_tera_gas,
             fail_on_timeout_tera_gas: value.fail_on_timeout_tera_gas,
             clean_tee_status_tera_gas: value.clean_tee_status_tera_gas,
             cleanup_orphaned_node_migrations_tera_gas: value

@@ -8,10 +8,12 @@ use crate::tracking::AutoAbortTask;
 use mpc_contract::primitives::domain::{DomainConfig, DomainId, SignatureScheme};
 use near_o11y::testonly::init_integration_logger;
 use near_time::Clock;
+use serial_test::serial;
 
 // Make a cluster of four nodes, test that we can generate keyshares
 // and then produce signatures.
 #[tokio::test]
+#[serial]
 async fn test_basic_multidomain() {
     init_integration_logger();
     const NUM_PARTICIPANTS: usize = 4;
@@ -46,6 +48,11 @@ async fn test_basic_multidomain() {
             id: DomainId(2),
             scheme: SignatureScheme::Bls12381,
         },
+        // Dilithium (ML-DSA-87) - post-quantum threshold signatures
+        DomainConfig {
+            id: DomainId(3),
+            scheme: SignatureScheme::Dilithium,
+        },
     ];
 
     {
@@ -74,7 +81,8 @@ async fn test_basic_multidomain() {
         match domain.scheme {
             SignatureScheme::Secp256k1
             | SignatureScheme::Ed25519
-            | SignatureScheme::V2Secp256k1 => {
+            | SignatureScheme::V2Secp256k1
+            | SignatureScheme::Dilithium => {
                 assert!(request_signature_and_await_response(
                     &mut setup.indexer,
                     &format!("user{}", domain.id.0),
@@ -98,16 +106,21 @@ async fn test_basic_multidomain() {
     }
     let new_domains = vec![
         DomainConfig {
-            id: DomainId(3),
+            id: DomainId(4),
             scheme: SignatureScheme::Ed25519,
         },
         DomainConfig {
-            id: DomainId(4),
+            id: DomainId(5),
             scheme: SignatureScheme::Secp256k1,
         },
         DomainConfig {
-            id: DomainId(5),
+            id: DomainId(6),
             scheme: SignatureScheme::Bls12381,
+        },
+        // Add another Dilithium domain to test adding domains after initialization
+        DomainConfig {
+            id: DomainId(7),
+            scheme: SignatureScheme::Dilithium,
         },
     ];
 
@@ -138,7 +151,8 @@ async fn test_basic_multidomain() {
         match domain.scheme {
             SignatureScheme::Secp256k1
             | SignatureScheme::Ed25519
-            | SignatureScheme::V2Secp256k1 => {
+            | SignatureScheme::V2Secp256k1
+            | SignatureScheme::Dilithium => {
                 assert!(request_signature_and_await_response(
                     &mut setup.indexer,
                     &format!("user{}", domain.id.0),
@@ -187,7 +201,8 @@ async fn test_basic_multidomain() {
         match domain.scheme {
             SignatureScheme::Secp256k1
             | SignatureScheme::Ed25519
-            | SignatureScheme::V2Secp256k1 => {
+            | SignatureScheme::V2Secp256k1
+            | SignatureScheme::Dilithium => {
                 assert!(request_signature_and_await_response(
                     &mut setup.indexer,
                     &format!("user{}", domain.id.0),

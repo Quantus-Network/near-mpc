@@ -11,6 +11,7 @@ use mpc_contract::primitives::domain::{DomainConfig, DomainId, SignatureScheme};
 use mpc_contract::state::ProtocolContractState;
 use near_o11y::testonly::init_integration_logger;
 use near_time::Clock;
+use serial_test::serial;
 
 /// Runs a cluster of 3 nodes, but with only 2 participants.
 /// Two nodes of the cluster are assigned the same account id.
@@ -18,6 +19,7 @@ use near_time::Clock;
 /// After the conclusion of the key initialization and passing of a sanity check, the participant
 /// set will be forcefully changed.
 #[tokio::test]
+#[serial]
 async fn test_changing_participant_set_test_keyshare_import() {
     init_integration_logger();
     const NUM_PARTICIPANTS: usize = 2;

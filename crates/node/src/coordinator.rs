@@ -18,6 +18,7 @@ use crate::network::{
 use crate::p2p::new_tls_mesh_network;
 use crate::primitives::MpcTaskId;
 use crate::providers::ckd::CKDProvider;
+use crate::providers::dilithium::{DilithiumKeygenOutput, DilithiumSignatureProvider};
 use crate::providers::eddsa::{EddsaSignatureProvider, EddsaTaskId};
 use crate::providers::robust_ecdsa::RobustEcdsaSignatureProvider;
 use crate::providers::{EcdsaSignatureProvider, EcdsaTaskId};
@@ -496,6 +497,12 @@ where
 
                 let sign_request_store = Arc::new(SignRequestStorage::new(secret_db.clone())?);
                 let ckd_request_store = Arc::new(CKDRequestStorage::new(secret_db.clone())?);
+                let dilithium_key_registration_store = Arc::new(
+                    crate::storage::DilithiumKeyRegistrationStorage::new(secret_db.clone())?,
+                );
+                let dilithium_derived_share_storage = Arc::new(
+                    crate::storage::DilithiumDerivedShareStorage::new(secret_db.clone())?,
+                );
 
                 let mut ecdsa_keyshares: HashMap<DomainId, ecdsa::KeygenOutput> = HashMap::new();
                 let mut robust_ecdsa_keyshares: HashMap<DomainId, ecdsa::KeygenOutput> =
@@ -505,6 +512,8 @@ where
                     DomainId,
                     confidential_key_derivation::KeygenOutput,
                 > = HashMap::new();
+                let mut dilithium_keyshares: HashMap<DomainId, DilithiumKeygenOutput> =
+                    HashMap::new();
                 let mut domain_to_scheme: HashMap<DomainId, SignatureScheme> = HashMap::new();
 
                 for keyshare in keyshares {
@@ -525,6 +534,10 @@ where
                         KeyshareData::V2Secp256k1(data) => {
                             robust_ecdsa_keyshares.insert(keyshare.key_id.domain_id, data);
                             domain_to_scheme.insert(domain_id, SignatureScheme::V2Secp256k1);
+                        }
+                        KeyshareData::Dilithium(data) => {
+                            dilithium_keyshares.insert(keyshare.key_id.domain_id, *data);
+                            domain_to_scheme.insert(domain_id, SignatureScheme::Dilithium);
                         }
                     }
                 }
@@ -559,10 +572,19 @@ where
 
                 let ckd_provider = Arc::new(CKDProvider::new(
                     config_file.clone().into(),
-                    running_mpc_config.into(),
+                    running_mpc_config.clone().into(),
                     network_client.clone(),
                     ckd_request_store.clone(),
                     ckd_keyshares,
+                ));
+
+                let dilithium_signature_provider = Arc::new(DilithiumSignatureProvider::new(
+                    config_file.clone().into(),
+                    running_mpc_config.into(),
+                    network_client.clone(),
+                    sign_request_store.clone(),
+                    dilithium_keyshares,
+                    dilithium_derived_share_storage,
                 ));
 
                 let mpc_client = Arc::new(MpcClient::new(
@@ -570,10 +592,12 @@ where
                     network_client,
                     sign_request_store,
                     ckd_request_store,
+                    dilithium_key_registration_store,
                     ecdsa_signature_provider,
                     robust_ecdsa_signature_provider,
                     eddsa_signature_provider,
                     ckd_provider,
+                    dilithium_signature_provider,
                     domain_to_scheme,
                 ));
 
