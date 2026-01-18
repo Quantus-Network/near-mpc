@@ -231,10 +231,20 @@ impl MpcLeaderCentricComputation<Option<DilithiumSignature>> for DilithiumSignCo
         )
         .map_err(|e| anyhow::anyhow!("Failed to create threshold signer: {:?}", e))?;
 
+        // Get the leader ID from the channel
+        let leader_id = channel.sender().get_leader().raw();
+
         // Create the signing protocol with NEAR participant IDs directly
         // The threshold library handles ID-to-index mapping internally via ParticipantList
-        let protocol =
-            DilithiumSignProtocol::new(signer, self.message, self.context, participant_ids, my_id);
+        // The leader is responsible for combine/retry decisions in the 4-round protocol
+        let protocol = DilithiumSignProtocol::new(
+            signer,
+            self.message,
+            self.context,
+            participant_ids,
+            my_id,
+            leader_id,
+        );
 
         // Wrap in cait-sith compatible adapter
         // The adapter only converts between NEAR's Participant type and our u32 IDs
@@ -244,12 +254,8 @@ impl MpcLeaderCentricComputation<Option<DilithiumSignature>> for DilithiumSignCo
         let signature: DilithiumSignature =
             run_protocol("sign dilithium", channel, adapter).await?;
 
-        // Return signature (leader gets Some, followers get None in leader-centric)
-        if channel.my_participant_id() == channel.sender().get_leader() {
-            Ok(Some(signature))
-        } else {
-            Ok(None)
-        }
+        // All parties now get the signature (leader broadcasts it in Round 4)
+        Ok(Some(signature))
     }
 
     fn leader_waits_for_success(&self) -> bool {
