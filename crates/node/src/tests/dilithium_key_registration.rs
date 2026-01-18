@@ -24,13 +24,13 @@ use crate::tests::{
     request_ckd_and_await_response, request_dilithium_key_registration_and_await_response,
     request_signature_and_await_response, request_signature_and_await_response_with_path,
     IntegrationTestSetup, DEFAULT_BLOCK_TIME, DEFAULT_MAX_DILITHIUM_PROTOCOL_WAIT_TIME,
-    DEFAULT_MAX_DILITHIUM_SIGNATURE_WAIT_TIME, DEFAULT_MAX_PROTOCOL_WAIT_TIME,
-    DEFAULT_MAX_SIGNATURE_WAIT_TIME,
+    DEFAULT_MAX_DILITHIUM_SIGNATURE_WAIT_TIME, DEFAULT_MAX_SIGNATURE_WAIT_TIME,
 };
 use crate::tracking::AutoAbortTask;
 use mpc_contract::primitives::domain::{DomainConfig, DomainId, SignatureScheme};
 use near_o11y::testonly::init_integration_logger;
 use near_time::Clock;
+use serial_test::serial;
 
 /// Test the complete Dilithium key registration and signing flow.
 ///
@@ -40,6 +40,7 @@ use near_time::Clock;
 /// 3. Registers a derived key via `register_dilithium_key`
 /// 4. Verifies the derived key DKG completes
 /// 5. Signs with the derived key
+#[serial]
 #[tokio::test]
 async fn test_dilithium_key_registration_and_sign() {
     init_integration_logger();
@@ -151,6 +152,7 @@ async fn test_dilithium_key_registration_and_sign() {
 }
 
 /// Test registering multiple derived keys for different paths.
+#[serial]
 #[tokio::test]
 async fn test_dilithium_multiple_derived_keys() {
     init_integration_logger();
@@ -260,6 +262,7 @@ async fn test_dilithium_multiple_derived_keys() {
 }
 
 /// Test that different users can register keys for the same path.
+#[serial]
 #[tokio::test]
 async fn test_dilithium_different_users_same_path() {
     init_integration_logger();
@@ -358,6 +361,7 @@ async fn test_dilithium_different_users_same_path() {
 /// This is a critical security test: unlike ECC where derived_key = master + tweak,
 /// Dilithium requires a full DKG for each derived key. Falling back to the master
 /// key would be incorrect and insecure.
+#[serial]
 #[tokio::test]
 async fn test_dilithium_sign_without_registration_fails() {
     init_integration_logger();
@@ -480,6 +484,7 @@ async fn test_dilithium_sign_without_registration_fails() {
 /// - Dilithium domains require key registration before signing
 /// - ECC domains (Secp256k1, Ed25519) can sign without explicit key registration
 /// - Both can coexist in the same cluster
+#[serial]
 #[tokio::test]
 async fn test_dilithium_mixed_domains() {
     init_integration_logger();
@@ -646,6 +651,7 @@ async fn test_dilithium_mixed_domains() {
 ///
 /// Multiple users registering keys simultaneously should all succeed,
 /// with each getting their own distinct derived key.
+#[serial]
 #[tokio::test]
 async fn test_dilithium_concurrent_registrations() {
     init_integration_logger();
@@ -794,6 +800,7 @@ async fn test_dilithium_concurrent_registrations() {
 /// The system should either:
 /// - Return the existing key (idempotent)
 /// - Or reject the duplicate registration
+#[serial]
 #[tokio::test]
 async fn test_dilithium_duplicate_registration() {
     init_integration_logger();

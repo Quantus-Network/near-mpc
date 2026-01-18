@@ -3,6 +3,7 @@ use k256::Scalar;
 use rand::rngs::OsRng;
 use rand::SeedableRng as _;
 use serde::Serialize;
+use serial_test::serial;
 use std::collections::VecDeque;
 use threshold_signatures::ecdsa::ot_based_ecdsa::{PresignArguments, RerandomizedPresignOutput};
 use threshold_signatures::ecdsa::RerandomizationArguments;
@@ -190,6 +191,7 @@ const NUM_PARTICIPANTS: usize = 10;
 const THRESHOLD: usize = 7;
 
 #[test]
+#[serial]
 fn triple_network_research_best_case() {
     let mut protocols = Vec::new();
     let participants = (0..NUM_PARTICIPANTS)
@@ -220,6 +222,7 @@ fn triple_network_research_best_case() {
 }
 
 #[test]
+#[serial]
 fn triple_network_research_worst_case() {
     let mut protocols = Vec::new();
     let participants = (0..NUM_PARTICIPANTS)
@@ -250,6 +253,7 @@ fn triple_network_research_worst_case() {
 }
 
 #[test]
+#[serial]
 fn presignature_network_research_best_case() {
     let mut rng = rand::rngs::StdRng::from_seed([1u8; 32]);
     let generator = TestGenerators::new_contiguous_participant_ids(NUM_PARTICIPANTS, THRESHOLD);
@@ -290,6 +294,7 @@ fn presignature_network_research_best_case() {
 }
 
 #[test]
+#[serial]
 fn signature_network_research_best_case() {
     let mut rng = rand::rngs::StdRng::from_seed([1u8; 32]);
     let generator = TestGenerators::new_contiguous_participant_ids(NUM_PARTICIPANTS, THRESHOLD);

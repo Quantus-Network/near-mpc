@@ -305,8 +305,6 @@ impl Protocol for DilithiumProtocolAdapter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_arbitrary_participant_ids() {
         // Test that large NEAR-style IDs work directly without mapping

@@ -17,8 +17,6 @@ use crate::network::NetworkTaskChannel;
 use crate::primitives::{MpcTaskId, ParticipantId};
 use crate::types::SignatureId;
 pub use ckd::CKDProvider;
-pub use dilithium::DilithiumSignatureProvider;
-pub use dilithium::DilithiumTaskId;
 pub use ecdsa::EcdsaSignatureProvider;
 pub use ecdsa::EcdsaTaskId;
 pub use robust_ecdsa::RobustEcdsaSignatureProvider;

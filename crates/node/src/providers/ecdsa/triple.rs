@@ -304,6 +304,7 @@ mod tests {
     use crate::tracing::init_logging;
     use crate::tracking;
     use futures::{stream, StreamExt};
+    use serial_test::serial;
     use std::collections::HashMap;
     use std::sync::Arc;
     use threshold_signatures::test_utils::TestGenerators;
@@ -316,6 +317,7 @@ mod tests {
     const BATCHES_TO_GENERATE_PER_CLIENT: usize = 10;
 
     #[tokio::test(flavor = "multi_thread")]
+    #[serial]
     async fn test_many_triple_generation() {
         init_logging(LogFormat::Plain);
         tracking::testing::start_root_task_with_periodic_dump(async {

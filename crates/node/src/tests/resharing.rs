@@ -15,13 +15,14 @@ use serial_test::serial;
 use super::DEFAULT_BLOCK_TIME;
 
 // Test a simple resharing of one node joining a cluster of 4 nodes.
-#[tokio::test]
 #[rstest]
 #[case(0, SignatureScheme::Secp256k1, 3)]
 #[case(1, SignatureScheme::Ed25519, 3)]
 #[case(2, SignatureScheme::Bls12381, 3)]
 #[case(3, SignatureScheme::V2Secp256k1, 5)]
 #[case(4, SignatureScheme::Dilithium, 2)]
+#[tokio::test]
+#[serial]
 async fn test_key_resharing_simple(
     #[case] case: u16,
     #[case] scheme: SignatureScheme,
@@ -149,6 +150,7 @@ async fn test_key_resharing_simple(
 }
 
 // Test two nodes joining and two old nodes leaving.
+#[serial]
 #[tokio::test]
 async fn test_key_resharing_multistage() {
     init_integration_logger();

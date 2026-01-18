@@ -517,10 +517,11 @@ impl MpcClient {
                                 // Run DKG to create the derived key
                                 let result = timeout(
                                     Duration::from_secs(this.config.signature.timeout_sec),
-                                    this.dilithium_signature_provider.run_key_registration_as_leader(
-                                        registration_attempt.request.domain_id,
-                                        registration_attempt.request.tweak.clone(),
-                                    ),
+                                    this.dilithium_signature_provider
+                                        .run_key_registration_as_leader(
+                                            registration_attempt.request.domain_id,
+                                            registration_attempt.request.tweak.clone(),
+                                        ),
                                 )
                                 .await;
 
@@ -528,7 +529,7 @@ impl MpcClient {
                                     Ok(Ok(public_key)) => {
                                         // Create the response args from the request
                                         let registration_from_chain =
-                                            crate::indexer::handler::DilithiumKeyRegistrationFromChain {
+                                            DilithiumKeyRegistrationFromChain {
                                                 request_id: registration_attempt.request.id,
                                                 path: registration_attempt.request.path.clone(),
                                                 domain_id: registration_attempt.request.domain_id,

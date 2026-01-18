@@ -177,47 +177,6 @@ impl DilithiumKeyRegistrationStorage {
         let _ = self.add_sender.send(request.id);
         true
     }
-
-    /// Blocks until a key registration request with given id is present, then returns it.
-    /// This behavior is necessary because a peer might initiate computation for a key
-    /// registration before our indexer has caught up to the request.
-    pub async fn get(
-        &self,
-        id: DilithiumKeyRegistrationId,
-    ) -> Result<DilithiumKeyRegistrationRequest, anyhow::Error> {
-        let key = borsh::to_vec(&id)?;
-        let mut rx = self.add_sender.subscribe();
-        if let Some(request_ser) = self.db.get(DBCol::DilithiumKeyRegistrationRequest, &key)? {
-            return Ok(serde_json::from_slice(&request_ser)?);
-        }
-        loop {
-            let added_id = match rx.recv().await {
-                Ok(added_id) => added_id,
-                Err(e) => match e {
-                    broadcast::error::RecvError::Closed => {
-                        metrics::DILITHIUM_KEY_REGISTRATION_CHANNEL_FAILED.inc();
-                        return Err(anyhow::anyhow!(
-                            "Error in dilithium_key_registration channel recv, {e}"
-                        ));
-                    }
-                    broadcast::error::RecvError::Lagged(msg_n) => {
-                        tracing::info!(
-                            "{msg_n} messages lagged during dilithium_key_registration channel recv"
-                        );
-                        continue;
-                    }
-                },
-            };
-            if added_id == id {
-                break;
-            }
-        }
-        let request_ser = self
-            .db
-            .get(DBCol::DilithiumKeyRegistrationRequest, &key)?
-            .unwrap();
-        Ok(serde_json::from_slice(&request_ser)?)
-    }
 }
 
 /// Storage for derived Dilithium keyshares.
@@ -246,24 +205,6 @@ impl DilithiumDerivedShareStorage {
             id.domain_id
         );
         Ok(())
-    }
-
-    /// Load a derived keyshare if it exists.
-    pub fn load(&self, id: &DerivedKeyId) -> anyhow::Result<Option<DilithiumKeygenOutput>> {
-        let key = Self::make_key(id);
-        match self.db.get(DBCol::DilithiumDerivedShare, &key)? {
-            Some(value) => {
-                let output: DilithiumKeygenOutput = serde_json::from_slice(&value)?;
-                Ok(Some(output))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Check if a derived keyshare exists.
-    pub fn exists(&self, id: &DerivedKeyId) -> anyhow::Result<bool> {
-        let key = Self::make_key(id);
-        Ok(self.db.get(DBCol::DilithiumDerivedShare, &key)?.is_some())
     }
 
     /// Load all derived keyshares for a given domain.

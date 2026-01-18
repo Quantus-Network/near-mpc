@@ -175,11 +175,6 @@ impl DilithiumSignatureProvider {
         // Store in memory cache
         self.derived_shares.write().unwrap().insert(id, output);
     }
-
-    /// Check if a derived keyshare exists.
-    pub fn has_derived_share(&self, id: &DerivedKeyId) -> bool {
-        self.derived_shares.read().unwrap().contains_key(id)
-    }
 }
 
 /// Task identifiers for Dilithium MPC operations.

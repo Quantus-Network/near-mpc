@@ -10,8 +10,6 @@
 //! 2. The same (master_key, tweak) always produces the same derived key
 //! 3. Only parties with valid master shares can participate
 
-use anyhow::Context;
-
 use crate::network::computation::MpcLeaderCentricComputation;
 use crate::network::NetworkTaskChannel;
 use crate::primitives::ParticipantId;
@@ -121,72 +119,6 @@ impl DilithiumSignatureProvider {
         );
 
         Ok(derived_output.public_key)
-    }
-
-    /// Handle a key registration request by running DKG for a derived key.
-    ///
-    /// This is called when the contract emits a `register_dilithium_key` event.
-    /// All participating nodes run a full DKG protocol, with randomness seeded
-    /// by their master share + the tweak to ensure determinism.
-    pub async fn handle_key_registration(
-        &self,
-        domain_id: DomainId,
-        tweak: Tweak,
-        channel: NetworkTaskChannel,
-    ) -> anyhow::Result<DilithiumPublicKey> {
-        // Get the master keyshare for this domain
-        let master_keygen_output = self
-            .keyshares
-            .get(&domain_id)
-            .ok_or_else(|| anyhow::anyhow!("No master keyshare for domain {:?}", domain_id))?;
-
-        let threshold = master_keygen_output.private_share.threshold() as usize;
-
-        // Run the derived key DKG
-        let derived_output = DilithiumDerivedKeyComputation {
-            master_share: master_keygen_output.private_share.clone(),
-            tweak: tweak.as_bytes(),
-            threshold,
-        }
-        .perform_leader_centric_computation(
-            channel,
-            Duration::from_secs(120), // DKG may take longer than signing
-        )
-        .await?;
-
-        tracing::info!(
-            "Dilithium derived key generation completed for domain {:?}",
-            domain_id
-        );
-
-        Ok(derived_output.public_key)
-    }
-
-    /// Run key registration as a follower (responding to another node's lead).
-    pub async fn handle_key_registration_follower(
-        &self,
-        domain_id: DomainId,
-        tweak: Tweak,
-        channel: NetworkTaskChannel,
-    ) -> anyhow::Result<DilithiumKeygenOutput> {
-        // Get the master keyshare for this domain
-        let master_keygen_output = self
-            .keyshares
-            .get(&domain_id)
-            .ok_or_else(|| anyhow::anyhow!("No master keyshare for domain {:?}", domain_id))?;
-
-        let threshold = master_keygen_output.private_share.threshold() as usize;
-
-        // Run the derived key DKG as follower
-        let derived_output = DilithiumDerivedKeyComputation {
-            master_share: master_keygen_output.private_share.clone(),
-            tweak: tweak.as_bytes(),
-            threshold,
-        }
-        .perform_leader_centric_computation(channel, Duration::from_secs(120))
-        .await?;
-
-        Ok(derived_output)
     }
 
     /// Handle key registration as a follower when receiving a task from the network.
