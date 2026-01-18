@@ -203,7 +203,7 @@ impl Protocol for DilithiumResharingAdapter {
                 ResharingAction::Return(output) => Ok(Action::Return(output)),
             },
             Err(e) => Err(threshold_signatures::errors::ProtocolError::Other(
-                e.to_string().into(),
+                e.to_string(),
             )),
         }
     }

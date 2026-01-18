@@ -291,7 +291,7 @@ impl Protocol for DilithiumProtocolAdapter {
                 DilithiumAction::Return(sig) => Ok(Action::Return(sig)),
             },
             Err(e) => Err(threshold_signatures::errors::ProtocolError::Other(
-                e.to_string().into(),
+                e.to_string(),
             )),
         }
     }

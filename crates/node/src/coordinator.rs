@@ -536,7 +536,7 @@ where
                             domain_to_scheme.insert(domain_id, SignatureScheme::V2Secp256k1);
                         }
                         KeyshareData::Dilithium(data) => {
-                            dilithium_keyshares.insert(keyshare.key_id.domain_id, data);
+                            dilithium_keyshares.insert(keyshare.key_id.domain_id, *data);
                             domain_to_scheme.insert(domain_id, SignatureScheme::Dilithium);
                         }
                     }

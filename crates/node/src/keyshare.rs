@@ -24,7 +24,7 @@ pub enum KeyshareData {
     Ed25519(threshold_signatures::eddsa::KeygenOutput),
     Bls12381(threshold_signatures::confidential_key_derivation::KeygenOutput),
     V2Secp256k1(threshold_signatures::ecdsa::KeygenOutput),
-    Dilithium(DilithiumKeygenOutput),
+    Dilithium(Box<DilithiumKeygenOutput>),
 }
 
 /// A single keyshare, corresponding to one epoch, one domain, one attempt.
@@ -41,7 +41,9 @@ impl Keyshare {
             KeyshareData::Ed25519(data) => Ok(data.public_key.into_contract_interface_type()),
             KeyshareData::Bls12381(data) => Ok(data.public_key.into_contract_interface_type()),
             KeyshareData::V2Secp256k1(data) => Ok(data.public_key.into_contract_interface_type()),
-            KeyshareData::Dilithium(data) => Ok(data.public_key.clone().into_contract_interface_type()),
+            KeyshareData::Dilithium(data) => {
+                Ok(data.public_key.clone().into_contract_interface_type())
+            }
         }
     }
 
