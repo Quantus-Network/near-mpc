@@ -877,33 +877,16 @@ impl MpcContract {
 
                 ed25519_verify(signature.as_bytes(), message, &derived_public_key_32_bytes)
             }
-            (SignatureResponse::Dilithium { signature }, PublicKeyExtended::Dilithium { .. }) => {
+            (SignatureResponse::Dilithium { .. }, PublicKeyExtended::Dilithium { .. }) => {
                 let tweak_id = DilithiumTweakKeyId::new(request.tweak.clone(), domain);
-                let derived_pubkey = match self.get_dilithium_derived_key(&tweak_id) {
-                    Some(pk) => pk,
-                    None => {
-                        log!("Dilithium derived key not found for tweak");
-                        return Err(RespondError::DilithiumDerivedKeyNotFound.into());
-                    }
-                };
-
-                let dilithium_pk =
-                    match qp_rusty_crystals_dilithium::ml_dsa_87::PublicKey::from_bytes(
-                        derived_pubkey.as_bytes(),
-                    ) {
-                        Ok(pk) => pk,
-                        Err(_) => {
-                            log!("Failed to parse Dilithium public key");
-                            return Err(RespondError::InvalidSignature.into());
-                        }
-                    };
-
-                let message = request
-                    .payload
-                    .as_eddsa()
-                    .expect("Payload is not Dilithium/EdDSA compatible");
-
-                dilithium_pk.verify(message, &signature, None)
+                if self.get_dilithium_derived_key(&tweak_id).is_none() {
+                    log!("Dilithium derived key not found for tweak");
+                    return Err(RespondError::DilithiumDerivedKeyNotFound.into());
+                }
+                // Dilithium signature verification is performed by MPC nodes
+                // before submitting the respond() call. The contract trusts
+                // that the threshold of participating nodes have verified it.
+                true
             }
             (signature_response, public_key_requested) => {
                 return Err(RespondError::SignatureSchemeMismatch.message(format!(

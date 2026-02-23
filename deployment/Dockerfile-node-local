@@ -1,0 +1,32 @@
+FROM --platform=linux/arm64 rust:1.86-bookworm AS builder
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends clang libclang-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy workspace files
+COPY near-mpc/Cargo.toml near-mpc/Cargo.lock ./
+COPY near-mpc/crates/ crates/
+COPY near-mpc/third-party-licenses/ third-party-licenses/
+
+# Copy local qp-rusty-crystals dependency (referenced as ../qp-rusty-crystals in Cargo.toml)
+COPY qp-rusty-crystals/ /qp-rusty-crystals/
+
+RUN cargo build -p mpc-node --release
+
+FROM --platform=linux/arm64 debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates openssl python3 && \
+    rm -rf /var/log/* /var/cache/ldconfig/aux-cache /var/lib/apt/lists/*
+
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+WORKDIR /app
+COPY --from=builder /build/target/release/mpc-node /app/mpc-node
+COPY --chmod=0755 near-mpc/deployment/start.sh /app/start.sh
+COPY --chmod=0755 near-mpc/deployment/localnet/genesis.json /app/localnet-genesis.json
+CMD [ "/app/start.sh" ]

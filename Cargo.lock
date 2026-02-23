@@ -5299,7 +5299,6 @@ dependencies = [
  "near-account-id 2.5.0",
  "near-sdk",
  "near-workspaces",
- "qp-rusty-crystals-dilithium",
  "rand 0.8.5",
  "rand_core 0.6.4",
  "rstest",

@@ -65,13 +65,12 @@ k256 = { workspace = true, features = [
 ] }
 mpc-attestation = { workspace = true }
 mpc-primitives = { workspace = true }
-qp-rusty-crystals-dilithium = { workspace = true }
 near-account-id = { workspace = true, features = [
     "schemars-v0_8",
     "abi",
     "serde",
 ] }
-near-sdk = { workspace = true }
+near-sdk = { version = "5.24.1", features = ["legacy", "unstable"] }
 rand = { workspace = true, optional = true }
 schemars = { workspace = true }
 serde = { workspace = true }

@@ -451,6 +451,45 @@ impl<'de> serde::Deserialize<'de> for Bls12381G2PublicKey {
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, BorshSerialize, BorshDeserialize)]
 pub struct DilithiumPublicKey(pub Box<[u8; DILITHIUM_PUBLIC_KEY_SIZE]>);
 
+#[cfg(all(feature = "abi", not(target_arch = "wasm32")))]
+impl borsh::BorshSchema for DilithiumPublicKey {
+    fn declaration() -> borsh::schema::Declaration {
+        "DilithiumPublicKey".to_string()
+    }
+
+    fn add_definitions_recursively(
+        definitions: &mut std::collections::BTreeMap<
+            borsh::schema::Declaration,
+            borsh::schema::Definition,
+        >,
+    ) {
+        // Represent as a fixed-length sequence of bytes
+        let definition = borsh::schema::Definition::Sequence {
+            length_width: 0,
+            length_range: (DILITHIUM_PUBLIC_KEY_SIZE as u64)
+                ..=(DILITHIUM_PUBLIC_KEY_SIZE as u64),
+            elements: u8::declaration(),
+        };
+        definitions.insert(Self::declaration(), definition);
+        u8::add_definitions_recursively(definitions);
+    }
+}
+
+#[cfg(all(feature = "abi", not(target_arch = "wasm32")))]
+impl schemars::JsonSchema for DilithiumPublicKey {
+    fn is_referenceable() -> bool {
+        true
+    }
+
+    fn schema_name() -> String {
+        "DilithiumPublicKey".to_string()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::schema::Schema {
+        String::json_schema(generator)
+    }
+}
+
 impl std::fmt::Debug for DilithiumPublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "DilithiumPublicKey({})", bs58::encode(self.0.as_ref()).into_string())
