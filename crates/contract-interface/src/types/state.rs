@@ -158,6 +158,8 @@ pub enum SignatureScheme {
     Bls12381,
     /// Robust ECDSA variant.
     V2Secp256k1,
+    /// ML-DSA-87 (CRYSTALS-Dilithium) post-quantum signature scheme.
+    Dilithium,
 }
 
 /// The purpose that a domain serves.

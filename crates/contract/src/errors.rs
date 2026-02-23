@@ -45,6 +45,8 @@ pub enum RespondError {
     DomainNotFound,
     #[error("The provided tweak is not on the curve of the public key.")]
     TweakNotOnCurve,
+    #[error("Dilithium derived key not found for the given tweak.")]
+    DilithiumDerivedKeyNotFound,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
@@ -130,6 +132,13 @@ pub enum InvalidParameters {
     InvalidTlsPublicKey,
     #[error("Caller is not the signer account.")]
     CallerNotSigner,
+    #[error("Dilithium key not registered for account {account} and path {path}.")]
+    DilithiumKeyNotRegistered {
+        account: near_sdk::AccountId,
+        path: String,
+    },
+    #[error("Selected domain is not a Dilithium domain.")]
+    NotDilithiumDomain,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]

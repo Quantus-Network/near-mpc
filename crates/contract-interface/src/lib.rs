@@ -8,7 +8,8 @@ pub mod types {
     };
     pub use config::{Config, InitConfig};
     pub use crypto::{
-        Bls12381G1PublicKey, Bls12381G2PublicKey, Ed25519PublicKey, PublicKey, Secp256k1PublicKey,
+        Bls12381G1PublicKey, Bls12381G2PublicKey, DilithiumPublicKey, Ed25519PublicKey, PublicKey,
+        Secp256k1PublicKey,
     };
     pub use foreign_chain::*;
     pub use participants::{ParticipantId, ParticipantInfo, Participants};

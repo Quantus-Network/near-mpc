@@ -555,6 +555,9 @@ where
                             robust_ecdsa_keyshares.insert(keyshare.key_id.domain_id, data);
                             domain_to_scheme.insert(domain_id, SignatureScheme::V2Secp256k1);
                         }
+                        KeyshareData::Dilithium(_data) => {
+                            domain_to_scheme.insert(domain_id, SignatureScheme::Dilithium);
+                        }
                     }
                 }
 

@@ -19,7 +19,8 @@ use crate::{
     keyshare::{Keyshare, KeyshareData, KeyshareStorage},
     network::NetworkTaskChannel,
     providers::{
-        CKDProvider, EcdsaSignatureProvider, RobustEcdsaSignatureProvider, SignatureProvider,
+        dilithium::DilithiumSignatureProvider, CKDProvider, EcdsaSignatureProvider,
+        RobustEcdsaSignatureProvider, SignatureProvider,
     },
 };
 use contract_interface::types as dtos;
@@ -81,6 +82,12 @@ pub async fn keygen_computation_inner(
             let keyshare = CKDProvider::run_key_generation_client(threshold, channel).await?;
             let public_key = keyshare.public_key.into_contract_interface_type();
             (KeyshareData::Bls12381(keyshare), public_key)
+        }
+        SignatureScheme::Dilithium => {
+            let keyshare =
+                DilithiumSignatureProvider::run_key_generation_client(threshold, channel).await?;
+            let public_key = keyshare.public_key.into_contract_interface_type();
+            (KeyshareData::Dilithium(keyshare), public_key)
         }
     };
 

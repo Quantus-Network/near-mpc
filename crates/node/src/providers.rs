@@ -7,6 +7,7 @@
 //! As a reference, check the existing implementations.
 
 pub mod ckd;
+pub mod dilithium;
 pub mod ecdsa;
 pub mod eddsa;
 pub mod robust_ecdsa;

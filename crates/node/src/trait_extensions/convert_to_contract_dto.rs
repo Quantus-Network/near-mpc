@@ -193,6 +193,14 @@ impl IntoContractInterfaceType<dtos::PublicKey> for &ckd::VerifyingKey {
     }
 }
 
+impl IntoContractInterfaceType<dtos::PublicKey>
+    for &crate::providers::dilithium::DilithiumPublicKey
+{
+    fn into_contract_interface_type(self) -> dtos::PublicKey {
+        dtos::PublicKey::Dilithium(dtos::DilithiumPublicKey(Box::new(*self.as_bytes())))
+    }
+}
+
 impl IntoContractInterfaceType<dtos::PublicKey> for &frost_secp256k1::VerifyingKey {
     fn into_contract_interface_type(self) -> dtos::PublicKey {
         let mut bytes = [0u8; 64];

@@ -65,6 +65,7 @@ k256 = { workspace = true, features = [
 ] }
 mpc-attestation = { workspace = true }
 mpc-primitives = { workspace = true }
+qp-rusty-crystals-dilithium = { workspace = true }
 near-account-id = { workspace = true, features = [
     "schemars-v0_8",
     "abi",

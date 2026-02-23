@@ -60,6 +60,9 @@ pub fn make_actions(call: ContractActionCall) -> ActionCall {
                     SignatureScheme::Bls12381 => {
                         ckd_calls_by_domain.insert(domain.id.0, prot_calls);
                     }
+                    SignatureScheme::Dilithium => {
+                        ecdsa_calls_by_domain.insert(domain.id.0, prot_calls);
+                    }
                 }
             }
             ActionCall {
@@ -175,6 +178,12 @@ fn make_payload(scheme: SignatureScheme) -> Payload {
         }
         SignatureScheme::Bls12381 => {
             unreachable!("make_payload should not be called with `Bls12381` scheme")
+        }
+        SignatureScheme::Dilithium => {
+            let len = rand::random_range(32..=1232);
+            let mut payload = vec![0; len];
+            rand::rng().fill_bytes(&mut payload);
+            Payload::Eddsa(Bytes::new(payload).unwrap())
         }
     }
 }

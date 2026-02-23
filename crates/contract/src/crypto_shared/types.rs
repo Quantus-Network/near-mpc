@@ -23,6 +23,7 @@ use contract_interface::types as dtos;
 pub enum SignatureResponse {
     Secp256k1(k256_types::Signature),
     Ed25519 { signature: ed25519_types::Signature },
+    Dilithium { signature: Vec<u8> },
 }
 
 #[cfg_attr(
@@ -53,6 +54,9 @@ pub enum PublicKeyExtended {
         edwards_point: SerializableEdwardsPoint,
     },
     Bls12381 {
+        public_key: dtos::PublicKey,
+    },
+    Dilithium {
         public_key: dtos::PublicKey,
     },
 }
@@ -89,6 +93,10 @@ impl TryFrom<PublicKeyExtended> for near_sdk::PublicKey {
                 Err(errors::ConversionError::DataConversion
                     .message("Cannot convert Bls12381 key to near_sdk::PublicKey"))?
             }
+            PublicKeyExtended::Dilithium { public_key: _ } => {
+                Err(errors::ConversionError::DataConversion
+                    .message("Cannot convert Dilithium key to near_sdk::PublicKey"))?
+            }
         }
     }
 }
@@ -102,6 +110,7 @@ impl From<PublicKeyExtended> for dtos::PublicKey {
                 ..
             } => near_public_key_compressed.into_dto_type(),
             PublicKeyExtended::Bls12381 { public_key } => public_key,
+            PublicKeyExtended::Dilithium { public_key } => public_key,
         }
     }
 }
@@ -162,6 +171,9 @@ impl TryFrom<dtos::PublicKey> for PublicKeyExtended {
             }
             dtos::PublicKey::Bls12381(inner_public_key) => Self::Bls12381 {
                 public_key: dtos::PublicKey::from(inner_public_key),
+            },
+            dtos::PublicKey::Dilithium(inner_public_key) => Self::Dilithium {
+                public_key: dtos::PublicKey::Dilithium(inner_public_key),
             },
         };
 

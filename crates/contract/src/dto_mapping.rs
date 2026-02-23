@@ -526,6 +526,13 @@ impl From<contract_interface::types::InitConfig> for Config {
         if let Some(v) = config_ext.remove_non_participant_update_votes_tera_gas {
             config.remove_non_participant_update_votes_tera_gas = v;
         }
+        if let Some(v) = config_ext.dilithium_key_registration_gas_attachment_requirement_tera_gas
+        {
+            config.dilithium_key_registration_gas_attachment_requirement_tera_gas = v;
+        }
+        if let Some(v) = config_ext.return_dilithium_key_and_store_call_tera_gas {
+            config.return_dilithium_key_and_store_call_tera_gas = v;
+        }
 
         config
     }
@@ -551,6 +558,10 @@ impl From<&Config> for contract_interface::types::Config {
                 .cleanup_orphaned_node_migrations_tera_gas,
             remove_non_participant_update_votes_tera_gas: value
                 .remove_non_participant_update_votes_tera_gas,
+            dilithium_key_registration_gas_attachment_requirement_tera_gas: value
+                .dilithium_key_registration_gas_attachment_requirement_tera_gas,
+            return_dilithium_key_and_store_call_tera_gas: value
+                .return_dilithium_key_and_store_call_tera_gas,
         }
     }
 }
@@ -575,6 +586,10 @@ impl From<contract_interface::types::Config> for Config {
                 .cleanup_orphaned_node_migrations_tera_gas,
             remove_non_participant_update_votes_tera_gas: value
                 .remove_non_participant_update_votes_tera_gas,
+            dilithium_key_registration_gas_attachment_requirement_tera_gas: value
+                .dilithium_key_registration_gas_attachment_requirement_tera_gas,
+            return_dilithium_key_and_store_call_tera_gas: value
+                .return_dilithium_key_and_store_call_tera_gas,
         }
     }
 }
@@ -630,6 +645,7 @@ impl IntoInterfaceType<dtos::SignatureScheme> for SignatureScheme {
             SignatureScheme::Ed25519 => dtos::SignatureScheme::Ed25519,
             SignatureScheme::Bls12381 => dtos::SignatureScheme::Bls12381,
             SignatureScheme::V2Secp256k1 => dtos::SignatureScheme::V2Secp256k1,
+            SignatureScheme::Dilithium => dtos::SignatureScheme::Dilithium,
         }
     }
 }
@@ -671,6 +687,9 @@ impl IntoInterfaceType<dtos::PublicKeyExtended> for &PublicKeyExtended {
                 edwards_point: edwards_point.to_bytes(),
             },
             PublicKeyExtended::Bls12381 { public_key } => dtos::PublicKeyExtended::Bls12381 {
+                public_key: public_key.clone(),
+            },
+            PublicKeyExtended::Dilithium { public_key } => dtos::PublicKeyExtended::Bls12381 {
                 public_key: public_key.clone(),
             },
         }

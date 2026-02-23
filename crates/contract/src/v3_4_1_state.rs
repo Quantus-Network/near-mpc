@@ -69,6 +69,10 @@ impl From<MpcContract> for crate::MpcContract {
             node_migrations: value.node_migrations,
             stale_data: crate::StaleData {},
             metrics: Default::default(),
+            pending_dilithium_key_requests: LookupMap::new(
+                StorageKey::PendingDilithiumKeyRequests,
+            ),
+            dilithium_derived_keys: LookupMap::new(StorageKey::DilithiumDerivedKeys),
         }
     }
 }
