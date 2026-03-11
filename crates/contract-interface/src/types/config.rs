@@ -43,6 +43,10 @@ pub struct InitConfig {
     pub cleanup_orphaned_node_migrations_tera_gas: Option<u64>,
     /// Prepaid gas for a `remove_non_participant_update_votes` call.
     pub remove_non_participant_update_votes_tera_gas: Option<u64>,
+    /// Gas required for a Dilithium key registration request.
+    pub dilithium_key_registration_gas_attachment_requirement_tera_gas: Option<u64>,
+    /// Prepaid gas for a `return_dilithium_key_and_store` call.
+    pub return_dilithium_key_and_store_call_tera_gas: Option<u64>,
 }
 
 /// Configuration parameters of the contract.
@@ -87,6 +91,10 @@ pub struct Config {
     pub cleanup_orphaned_node_migrations_tera_gas: u64,
     /// Prepaid gas for a `remove_non_participant_update_votes` call.
     pub remove_non_participant_update_votes_tera_gas: u64,
+    /// Gas required for a Dilithium key registration request.
+    pub dilithium_key_registration_gas_attachment_requirement_tera_gas: u64,
+    /// Prepaid gas for a `return_dilithium_key_and_store` call.
+    pub return_dilithium_key_and_store_call_tera_gas: u64,
 }
 
 #[cfg(test)]

@@ -6,8 +6,8 @@ pub mod primitives;
 
 pub use conversions::CryptoConversionError;
 pub use crypto::{
-    Bls12381G1PublicKey, Bls12381G2PublicKey, Ed25519PublicKey, ParsePublicKeyError, PublicKey,
-    PublicKeyExtended, Secp256k1PublicKey,
+    Bls12381G1PublicKey, Bls12381G2PublicKey, DilithiumPublicKey, Ed25519PublicKey,
+    ParsePublicKeyError, PublicKey, PublicKeyExtended, Secp256k1PublicKey,
 };
 pub use primitives::{
     Ed25519Signature, K256AffinePoint, K256Scalar, K256Signature, SignatureResponse,

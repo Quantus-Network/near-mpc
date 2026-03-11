@@ -317,3 +317,82 @@ mod tests {
             .expect("Stored CKD request should be retrievable");
     }
 }
+
+/// Storage for derived Dilithium keyshares.
+///
+/// These are generated via DKG when users call `register_dilithium_key`.
+pub struct DilithiumDerivedShareStorage {
+    db: Arc<SecretDB>,
+}
+
+#[allow(dead_code)] // Used when DilithiumSignatureProvider is wired into coordinator
+impl DilithiumDerivedShareStorage {
+    pub fn new(db: Arc<SecretDB>) -> anyhow::Result<Self> {
+        Ok(Self { db })
+    }
+
+    pub fn store(
+        &self,
+        id: &crate::providers::dilithium::DerivedKeyId,
+        output: &crate::providers::dilithium::DilithiumKeygenOutput,
+    ) -> anyhow::Result<()> {
+        let key = Self::make_key(id);
+        let value = serde_json::to_vec(output)?;
+        let mut update = self.db.update();
+        update.put(DBCol::DilithiumDerivedShare, &key, &value);
+        update.commit()?;
+        Ok(())
+    }
+
+    pub fn load_all_for_domain(
+        &self,
+        domain_id: mpc_contract::primitives::domain::DomainId,
+    ) -> anyhow::Result<
+        Vec<(
+            crate::providers::dilithium::DerivedKeyId,
+            crate::providers::dilithium::DilithiumKeygenOutput,
+        )>,
+    > {
+        let start_key = Self::make_key(&crate::providers::dilithium::DerivedKeyId {
+            domain_id,
+            tweak: [0u8; 32],
+        });
+        let end_key = Self::make_key(&crate::providers::dilithium::DerivedKeyId {
+            domain_id,
+            tweak: [0xffu8; 32],
+        });
+
+        let mut results = Vec::new();
+        for item in self
+            .db
+            .iter_range(DBCol::DilithiumDerivedShare, &start_key, &end_key)
+        {
+            let (key_bytes, value_bytes) = item?;
+            if let Some(id) = Self::parse_key(&key_bytes) {
+                let output: crate::providers::dilithium::DilithiumKeygenOutput =
+                    serde_json::from_slice(&value_bytes)?;
+                results.push((id, output));
+            }
+        }
+        Ok(results)
+    }
+
+    fn make_key(id: &crate::providers::dilithium::DerivedKeyId) -> Vec<u8> {
+        let mut key = Vec::with_capacity(8 + 32);
+        key.extend_from_slice(&id.domain_id.0.to_be_bytes());
+        key.extend_from_slice(&id.tweak);
+        key
+    }
+
+    fn parse_key(key: &[u8]) -> Option<crate::providers::dilithium::DerivedKeyId> {
+        if key.len() != 40 {
+            return None;
+        }
+        let domain_id = mpc_contract::primitives::domain::DomainId(u64::from_be_bytes(
+            key[0..8].try_into().ok()?,
+        ));
+        let mut tweak = [0u8; 32];
+        tweak.copy_from_slice(&key[8..40]);
+        Some(crate::providers::dilithium::DerivedKeyId { domain_id, tweak })
+    }
+}

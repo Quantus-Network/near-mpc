@@ -19,4 +19,6 @@ pub enum StorageKey {
     NodeMigrations,
     ForeignChainPolicyVotes,
     PendingVerifyForeignTxRequests,
+    PendingDilithiumKeyRequests,
+    DilithiumDerivedKeys,
 }

@@ -6,6 +6,8 @@ const ED25519_PUBLIC_KEY_SIZE: usize = 32;
 const SECP256K1_PUBLIC_KEY_SIZE: usize = 64;
 const BLS12381G1_PUBLIC_KEY_SIZE: usize = 48;
 const BLS12381G2_PUBLIC_KEY_SIZE: usize = 96;
+/// ML-DSA-87 (CRYSTALS-Dilithium) public key size in bytes.
+pub const DILITHIUM_PUBLIC_KEY_SIZE: usize = 2592;
 
 #[derive(
     Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, From, BorshSerialize, BorshDeserialize,
@@ -18,6 +20,7 @@ pub enum PublicKey {
     Secp256k1(Secp256k1PublicKey),
     Ed25519(Ed25519PublicKey),
     Bls12381(Bls12381G2PublicKey),
+    Dilithium(DilithiumPublicKey),
 }
 
 // Manual BorshSchema impl to avoid name collision with near_sdk::PublicKey
@@ -36,6 +39,7 @@ impl borsh::BorshSchema for PublicKey {
         <Secp256k1PublicKey as borsh::BorshSchema>::add_definitions_recursively(definitions);
         <Ed25519PublicKey as borsh::BorshSchema>::add_definitions_recursively(definitions);
         <Bls12381G2PublicKey as borsh::BorshSchema>::add_definitions_recursively(definitions);
+        <DilithiumPublicKey as borsh::BorshSchema>::add_definitions_recursively(definitions);
         definitions.insert(
             Self::declaration(),
             borsh::schema::Definition::Enum {
@@ -55,6 +59,11 @@ impl borsh::BorshSchema for PublicKey {
                         2,
                         "Bls12381".to_string(),
                         <Bls12381G2PublicKey as borsh::BorshSchema>::declaration(),
+                    ),
+                    (
+                        3,
+                        "Dilithium".to_string(),
+                        <DilithiumPublicKey as borsh::BorshSchema>::declaration(),
                     ),
                 ],
             },
@@ -249,6 +258,7 @@ impl From<&PublicKey> for String {
             PublicKey::Secp256k1(inner) => String::from(inner),
             PublicKey::Ed25519(inner) => String::from(inner),
             PublicKey::Bls12381(inner) => String::from(inner),
+            PublicKey::Dilithium(inner) => String::from(inner),
         }
     }
 }
@@ -287,6 +297,7 @@ impl std::str::FromStr for PublicKey {
                 "ed25519" => Ok(Self::Ed25519(Ed25519PublicKey::from_str(value)?)),
                 "secp256k1" => Ok(Self::Secp256k1(Secp256k1PublicKey::from_str(value)?)),
                 "bls12381g2" => Ok(Self::Bls12381(Bls12381G2PublicKey::from_str(value)?)),
+                "dilithium" => Ok(Self::Dilithium(DilithiumPublicKey::from_str(value)?)),
                 _ => Err(ParsePublicKeyError::WrongPrefix),
             }
         } else {
@@ -482,6 +493,120 @@ impl<'de> serde::Deserialize<'de> for Bls12381G2PublicKey {
     }
 }
 
+/// ML-DSA-87 (CRYSTALS-Dilithium) public key for post-quantum threshold signatures.
+///
+/// Serialized as `"dilithium:<bs58-encoded-bytes>"`.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, BorshSerialize, BorshDeserialize)]
+pub struct DilithiumPublicKey(pub Box<[u8; DILITHIUM_PUBLIC_KEY_SIZE]>);
+
+#[cfg(all(feature = "abi", not(target_arch = "wasm32")))]
+impl borsh::BorshSchema for DilithiumPublicKey {
+    fn declaration() -> borsh::schema::Declaration {
+        "DilithiumPublicKey".to_string()
+    }
+
+    fn add_definitions_recursively(
+        definitions: &mut std::collections::BTreeMap<
+            borsh::schema::Declaration,
+            borsh::schema::Definition,
+        >,
+    ) {
+        // Represent as a fixed-length sequence of bytes
+        let definition = borsh::schema::Definition::Sequence {
+            length_width: 0,
+            length_range: (DILITHIUM_PUBLIC_KEY_SIZE as u64)..=(DILITHIUM_PUBLIC_KEY_SIZE as u64),
+            elements: u8::declaration(),
+        };
+        definitions.insert(Self::declaration(), definition);
+        u8::add_definitions_recursively(definitions);
+    }
+}
+
+#[cfg(all(feature = "abi", not(target_arch = "wasm32")))]
+impl schemars::JsonSchema for DilithiumPublicKey {
+    fn is_referenceable() -> bool {
+        true
+    }
+
+    fn schema_name() -> String {
+        "DilithiumPublicKey".to_string()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::schema::Schema {
+        String::json_schema(generator)
+    }
+}
+
+impl std::fmt::Debug for DilithiumPublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "DilithiumPublicKey({})",
+            bs58::encode(self.0.as_ref()).into_string()
+        )
+    }
+}
+
+impl DilithiumPublicKey {
+    pub fn as_bytes(&self) -> &[u8; DILITHIUM_PUBLIC_KEY_SIZE] {
+        &self.0
+    }
+}
+
+impl AsRef<[u8]> for DilithiumPublicKey {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+impl From<&DilithiumPublicKey> for String {
+    fn from(pk: &DilithiumPublicKey) -> Self {
+        ["dilithium:", &bs58::encode(pk.as_ref()).into_string()].concat()
+    }
+}
+
+impl std::str::FromStr for DilithiumPublicKey {
+    type Err = ParsePublicKeyError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let Some((prefix, key_data)) = value.split_once(':') else {
+            return Err(ParsePublicKeyError::MissingSeparator);
+        };
+
+        if prefix != "dilithium" {
+            return Err(ParsePublicKeyError::WrongPrefix);
+        }
+
+        let data = bs58::decode(key_data)
+            .into_vec()
+            .map_err(|_| ParsePublicKeyError::InvalidBs58Encoding)?;
+        let bytes: [u8; DILITHIUM_PUBLIC_KEY_SIZE] = data
+            .try_into()
+            .map_err(|_| ParsePublicKeyError::InvalidKeyLength)?;
+        Ok(Self(Box::new(bytes)))
+    }
+}
+
+impl serde::Serialize for DilithiumPublicKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&String::from(self))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DilithiumPublicKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s: String = serde::Deserialize::deserialize(deserializer)?;
+        s.parse::<DilithiumPublicKey>()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// Extended public key representation for different signature schemes.
 #[derive(
     Clone,
@@ -515,4 +640,71 @@ pub enum PublicKeyExtended {
         /// The public key.
         public_key: PublicKey,
     },
+    /// Dilithium (ML-DSA-87) post-quantum public key.
+    Dilithium {
+        /// The public key.
+        public_key: PublicKey,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_assert_near_public_key_sizes() {
+        let near_public_keys = [
+            "secp256k1:4Ls3DBDeFDaf5zs2hxTBnJpKnfsnjNahpKU9HwQvij8fTXoCP9y5JQqQpe273WgrKhVVj1EH73t5mMJKDFMsxoEd",
+            "secp256k1:3Abs6NwUMErNAftRfipRjWxxqcTPBJTSr2uoHi3bHcthzb4iXqNnNYi86ATKwf4XWHg1JDrX2m1sJgNMYq7ey6cG",
+            "secp256k1:21C8NARZw2tUuULi1tENKi5azgDKLp9cv4FT2U1N6iF5k1W33BbJvsLr6rCZsYZxxUjBtpuWCsKvmv9P5ARzyyyn",
+            "secp256k1:4YbU8ZLEQK7gww1f65ZhtFCYfSxrm67sV9eaQi8oRo1LvCAtznztsiryJrzHg2oz285xN3ADAsGPizmCNe4hn9WR",
+            "ed25519:2XPuwqhg71RXRiTUMKGapd8FYWgXnxVvydYBK9tS1ex2",
+            "ed25519:4upBpJYUrjPBzqNYaY8pvJGQtep7YMT3j9zRsopYQqfG",
+            "ed25519:6sqMFXkswuH9b7Pnn6dGAy1vA1X3N2CSrKDDkdHzTcrv",
+            "ed25519:Fru1RoC6dw1xY2J6C6ZSBUt5PEysxTLX2kDexxqoDN6k",
+        ];
+        for pk in near_public_keys {
+            let near_pk: near_sdk::PublicKey = pk.parse().unwrap();
+            match near_pk.curve_type() {
+                near_sdk::CurveType::ED25519 => {
+                    assert_eq!(near_pk.as_bytes().len(), ED25519_PUBLIC_KEY_SIZE + 1);
+                }
+                near_sdk::CurveType::SECP256K1 => {
+                    assert_eq!(near_pk.as_bytes().len(), SECP256K1_PUBLIC_KEY_SIZE + 1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_assert_near_public_key_serde_equivalence() {
+        let public_keys = [
+            "secp256k1:4Ls3DBDeFDaf5zs2hxTBnJpKnfsnjNahpKU9HwQvij8fTXoCP9y5JQqQpe273WgrKhVVj1EH73t5mMJKDFMsxoEd",
+            "secp256k1:3Abs6NwUMErNAftRfipRjWxxqcTPBJTSr2uoHi3bHcthzb4iXqNnNYi86ATKwf4XWHg1JDrX2m1sJgNMYq7ey6cG",
+            "secp256k1:21C8NARZw2tUuULi1tENKi5azgDKLp9cv4FT2U1N6iF5k1W33BbJvsLr6rCZsYZxxUjBtpuWCsKvmv9P5ARzyyyn",
+            "secp256k1:4YbU8ZLEQK7gww1f65ZhtFCYfSxrm67sV9eaQi8oRo1LvCAtznztsiryJrzHg2oz285xN3ADAsGPizmCNe4hn9WR",
+            "ed25519:2XPuwqhg71RXRiTUMKGapd8FYWgXnxVvydYBK9tS1ex2",
+            "ed25519:4upBpJYUrjPBzqNYaY8pvJGQtep7YMT3j9zRsopYQqfG",
+            "ed25519:6sqMFXkswuH9b7Pnn6dGAy1vA1X3N2CSrKDDkdHzTcrv",
+            "ed25519:Fru1RoC6dw1xY2J6C6ZSBUt5PEysxTLX2kDexxqoDN6k",
+        ];
+        for pk in public_keys {
+            let near_pk: near_sdk::PublicKey = pk.parse().unwrap();
+            let dtos_pk: PublicKey = pk.parse().unwrap();
+            let near_pk_ser = serde_json::to_string(&near_pk).unwrap();
+            let dtos_pk_ser = serde_json::to_string(&dtos_pk).unwrap();
+            assert_eq!(near_pk_ser, dtos_pk_ser);
+            assert_eq!(format!("\"{pk}\""), dtos_pk_ser);
+
+            match (near_pk.curve_type(), dtos_pk) {
+                (near_sdk::CurveType::ED25519, PublicKey::Ed25519(inner)) => {
+                    assert_eq!(*inner, near_pk.as_bytes()[1..]);
+                }
+                (near_sdk::CurveType::SECP256K1, PublicKey::Secp256k1(inner)) => {
+                    assert_eq!(*inner, near_pk.as_bytes()[1..]);
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
 }

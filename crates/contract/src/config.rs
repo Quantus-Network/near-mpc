@@ -28,6 +28,10 @@ const DEFAULT_CLEAN_TEE_STATUS_TERA_GAS: u64 = 10;
 const DEFAULT_CLEANUP_ORPHANED_NODE_MIGRATIONS_TERA_GAS: u64 = 3;
 /// Prepaid gas for a `remove_non_participant_update_votes` call
 const DEFAULT_REMOVE_NON_PARTICIPANT_UPDATE_VOTES_TERA_GAS: u64 = 5;
+/// Gas required for a Dilithium key registration request
+const DEFAULT_DILITHIUM_KEY_REGISTRATION_GAS_ATTACHMENT_REQUIREMENT_TERA_GAS: u64 = 50;
+/// Prepaid gas for a `return_dilithium_key_and_store` call
+const DEFAULT_RETURN_DILITHIUM_KEY_AND_STORE_CALL_TERA_GAS: u64 = 10;
 
 /// Config for V2 of the contract.
 #[near(serializers=[borsh, json])]
@@ -56,6 +60,10 @@ pub(crate) struct Config {
     pub(crate) cleanup_orphaned_node_migrations_tera_gas: u64,
     /// Prepaid gas for a `remove_non_participant_update_votes` call.
     pub(crate) remove_non_participant_update_votes_tera_gas: u64,
+    /// Gas required for a Dilithium key registration request.
+    pub(crate) dilithium_key_registration_gas_attachment_requirement_tera_gas: u64,
+    /// Prepaid gas for a `return_dilithium_key_and_store` call.
+    pub(crate) return_dilithium_key_and_store_call_tera_gas: u64,
 }
 
 impl Default for Config {
@@ -78,6 +86,10 @@ impl Default for Config {
                 DEFAULT_CLEANUP_ORPHANED_NODE_MIGRATIONS_TERA_GAS,
             remove_non_participant_update_votes_tera_gas:
                 DEFAULT_REMOVE_NON_PARTICIPANT_UPDATE_VOTES_TERA_GAS,
+            dilithium_key_registration_gas_attachment_requirement_tera_gas:
+                DEFAULT_DILITHIUM_KEY_REGISTRATION_GAS_ATTACHMENT_REQUIREMENT_TERA_GAS,
+            return_dilithium_key_and_store_call_tera_gas:
+                DEFAULT_RETURN_DILITHIUM_KEY_AND_STORE_CALL_TERA_GAS,
         }
     }
 }

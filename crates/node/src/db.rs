@@ -30,6 +30,7 @@ pub enum DBCol {
     CKDRequest,
     VerifyForeignTxRequest,
     EpochData,
+    DilithiumDerivedShare,
 }
 
 impl DBCol {
@@ -41,10 +42,11 @@ impl DBCol {
             DBCol::CKDRequest => "ckd_request",
             DBCol::VerifyForeignTxRequest => "verify_foreign_tx_request",
             DBCol::EpochData => "epoch_id",
+            DBCol::DilithiumDerivedShare => "dilithium_derived_share",
         }
     }
 
-    fn all() -> [DBCol; 6] {
+    fn all() -> [DBCol; 7] {
         [
             DBCol::Triple,
             DBCol::Presignature,
@@ -52,6 +54,7 @@ impl DBCol {
             DBCol::CKDRequest,
             DBCol::VerifyForeignTxRequest,
             DBCol::EpochData,
+            DBCol::DilithiumDerivedShare,
         ]
     }
 }

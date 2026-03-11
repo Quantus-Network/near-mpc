@@ -421,7 +421,8 @@ where
 
                                         Ok(response)
                                     }
-                                    Some(SignatureScheme::Bls12381) => Err(anyhow::anyhow!(
+                                    Some(SignatureScheme::Bls12381)
+                                    | Some(SignatureScheme::Dilithium) => Err(anyhow::anyhow!(
                                         "Incorrect protocol for domain: {:?}",
                                         signature_attempt.request.domain.clone()
                                     )),
@@ -524,7 +525,8 @@ where
                                         }
                                         Some(SignatureScheme::Secp256k1)
                                         | Some(SignatureScheme::V2Secp256k1)
-                                        | Some(SignatureScheme::Ed25519) => Err(anyhow::anyhow!(
+                                        | Some(SignatureScheme::Ed25519)
+                                        | Some(SignatureScheme::Dilithium) => Err(anyhow::anyhow!(
                                             "Signature scheme is not allowed for domain: {:?}",
                                             ckd_attempt.request.domain_id.clone()
                                         )),
@@ -616,7 +618,8 @@ where
                                     }
                                     Some(SignatureScheme::Bls12381)
                                     | Some(SignatureScheme::V2Secp256k1)
-                                    | Some(SignatureScheme::Ed25519) => Err(anyhow::anyhow!(
+                                    | Some(SignatureScheme::Ed25519)
+                                    | Some(SignatureScheme::Dilithium) => Err(anyhow::anyhow!(
                                         "Signature scheme is not allowed for domain: {:?}",
                                         verify_foreign_tx_attempt.request.domain_id.clone()
                                     )),
@@ -710,6 +713,9 @@ where
                     .clone()
                     .process_channel(channel)
                     .await?
+            }
+            MpcTaskId::DilithiumTaskId(_) => {
+                tracing::warn!("Received Dilithium task channel — not yet handled in MpcClient");
             }
         }
 

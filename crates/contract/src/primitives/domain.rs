@@ -43,6 +43,7 @@ pub enum SignatureScheme {
     Ed25519,
     Bls12381,
     V2Secp256k1, // Robust ECDSA
+    Dilithium,   // ML-DSA-87 (CRYSTALS-Dilithium) post-quantum
 }
 
 impl Default for SignatureScheme {
@@ -67,6 +68,7 @@ pub fn is_valid_scheme_for_purpose(purpose: DomainPurpose, scheme: SignatureSche
         (DomainPurpose::Sign, SignatureScheme::Secp256k1)
             | (DomainPurpose::Sign, SignatureScheme::V2Secp256k1)
             | (DomainPurpose::Sign, SignatureScheme::Ed25519)
+            | (DomainPurpose::Sign, SignatureScheme::Dilithium)
             | (DomainPurpose::ForeignTx, SignatureScheme::Secp256k1)
             | (DomainPurpose::CKD, SignatureScheme::Bls12381)
     )

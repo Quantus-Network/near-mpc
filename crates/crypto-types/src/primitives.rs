@@ -23,6 +23,7 @@ use serde_with::{hex::Hex, serde_as};
 pub enum SignatureResponse {
     Secp256k1(K256Signature),
     Ed25519 { signature: Ed25519Signature },
+    Dilithium { signature: Vec<u8> },
 }
 
 #[serde_as]

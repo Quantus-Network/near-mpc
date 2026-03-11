@@ -12,5 +12,7 @@ pub fn dummy_config(value: u64) -> contract_interface::types::Config {
         clean_tee_status_tera_gas: value + 8,
         cleanup_orphaned_node_migrations_tera_gas: value + 9,
         remove_non_participant_update_votes_tera_gas: value + 10,
+        dilithium_key_registration_gas_attachment_requirement_tera_gas: value + 11,
+        return_dilithium_key_and_store_call_tera_gas: value + 12,
     }
 }
