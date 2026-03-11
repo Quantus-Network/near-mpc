@@ -18,6 +18,7 @@ use crate::{
         signature::{SignatureRequest, YieldIndex},
     },
     state::ProtocolContractState,
+    storage_keys::StorageKey,
     tee::tee_state::TeeState,
     update::ProposedUpdates,
     Config, ForeignChainPolicyVotes, StaleData,
@@ -61,6 +62,8 @@ impl From<MpcContract> for crate::MpcContract {
             node_migrations: value.node_migrations,
             stale_data: crate::StaleData {},
             metrics: value.metrics,
+            pending_dilithium_key_requests: LookupMap::new(StorageKey::PendingDilithiumKeyRequests),
+            dilithium_derived_keys: LookupMap::new(StorageKey::DilithiumDerivedKeys),
         }
     }
 }

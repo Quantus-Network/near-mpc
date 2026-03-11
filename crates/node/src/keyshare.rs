@@ -6,10 +6,9 @@ mod temporary;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
+use crate::trait_extensions::convert_to_contract_dto::IntoContractInterfaceType;
 use anyhow::Context;
-use contract_interface::types::{
-    Bls12381G2PublicKey, Ed25519PublicKey, PublicKey, Secp256k1PublicKey,
-};
+use contract_interface::types::PublicKey;
 use mpc_contract::primitives::key_state::Keyset;
 use mpc_contract::primitives::key_state::{EpochId, KeyEventId, KeyForDomain};
 use permanent::{PermanentKeyStorage, PermanentKeyStorageBackend, PermanentKeyshareData};
@@ -24,6 +23,7 @@ pub enum KeyshareData {
     Ed25519(threshold_signatures::frost::eddsa::KeygenOutput),
     Bls12381(threshold_signatures::confidential_key_derivation::KeygenOutput),
     V2Secp256k1(threshold_signatures::ecdsa::KeygenOutput),
+    Dilithium(Box<crate::providers::dilithium::DilithiumKeygenOutput>),
 }
 
 /// A single keyshare, corresponding to one epoch, one domain, one attempt.
@@ -36,18 +36,11 @@ pub struct Keyshare {
 impl Keyshare {
     pub fn public_key(&self) -> anyhow::Result<PublicKey> {
         match &self.data {
-            KeyshareData::Secp256k1(data) => Ok(PublicKey::Secp256k1(
-                Secp256k1PublicKey::try_from(data.public_key.to_element().to_affine())?,
-            )),
-            KeyshareData::Ed25519(data) => Ok(PublicKey::Ed25519(Ed25519PublicKey::from(
-                data.public_key.to_element().compress(),
-            ))),
-            KeyshareData::Bls12381(data) => Ok(PublicKey::Bls12381(Bls12381G2PublicKey::from(
-                &data.public_key.to_element(),
-            ))),
-            KeyshareData::V2Secp256k1(data) => Ok(PublicKey::Secp256k1(
-                Secp256k1PublicKey::try_from(data.public_key.to_element().to_affine())?,
-            )),
+            KeyshareData::Secp256k1(data) => Ok(data.public_key.into_contract_interface_type()),
+            KeyshareData::Ed25519(data) => Ok(data.public_key.into_contract_interface_type()),
+            KeyshareData::Bls12381(data) => Ok(data.public_key.into_contract_interface_type()),
+            KeyshareData::V2Secp256k1(data) => Ok(data.public_key.into_contract_interface_type()),
+            KeyshareData::Dilithium(data) => Ok(data.public_key.into_contract_interface_type()),
         }
     }
 

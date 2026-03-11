@@ -290,7 +290,8 @@ impl RunLoadtestCmd {
                 }
                 SignatureScheme::Ed25519
                 | SignatureScheme::Secp256k1
-                | SignatureScheme::V2Secp256k1 => {
+                | SignatureScheme::V2Secp256k1
+                | SignatureScheme::Dilithium => {
                     ContractActionCall::Sign(crate::contracts::RequestActionCallArgs {
                         mpc_contract: mpc_account,
                         domain_config,

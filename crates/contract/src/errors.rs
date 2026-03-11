@@ -47,6 +47,8 @@ pub enum RespondError {
     DomainNotFound,
     #[error("The provided tweak is not on the curve of the public key.")]
     TweakNotOnCurve,
+    #[error("Dilithium derived key not found for the given tweak.")]
+    DilithiumDerivedKeyNotFound,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
@@ -134,6 +136,13 @@ pub enum InvalidParameters {
     CallerNotSigner,
     #[error("Requested chain {requested:?} is not present in the active foreign chain policy.")]
     ChainNotInPolicy { requested: ForeignChain },
+    #[error("Dilithium key not registered for account {account} and path {path}.")]
+    DilithiumKeyNotRegistered {
+        account: near_sdk::AccountId,
+        path: String,
+    },
+    #[error("Selected domain is not a Dilithium domain.")]
+    NotDilithiumDomain,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]

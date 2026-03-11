@@ -1242,6 +1242,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "bindgen"
 version = "0.65.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5527,6 +5536,7 @@ dependencies = [
  "foreign-chain-inspector",
  "futures",
  "gcloud-sdk",
+ "getrandom 0.2.17",
  "hex",
  "http 1.4.0",
  "humantime",
@@ -5552,6 +5562,8 @@ dependencies = [
  "num_enum",
  "pprof",
  "prometheus",
+ "qp-rusty-crystals-dilithium",
+ "qp-rusty-crystals-threshold",
  "rand 0.8.5",
  "regex",
  "rocksdb",
@@ -8556,6 +8568,28 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "qp-rusty-crystals-dilithium"
+version = "2.1.0"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
+name = "qp-rusty-crystals-threshold"
+version = "1.0.0"
+dependencies = [
+ "bincode",
+ "hkdf",
+ "qp-rusty-crystals-dilithium",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "serde",
+ "sha2",
+ "thiserror 2.0.18",
+ "zeroize",
 ]
 
 [[package]]
