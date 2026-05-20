@@ -12,29 +12,41 @@ use crate::network::computation::MpcLeaderCentricComputation;
 use crate::network::NetworkTaskChannel;
 use crate::primitives::ParticipantId;
 use crate::protocol::run_protocol;
-use crate::providers::dilithium::{DilithiumKeygenOutput, DilithiumSignatureProvider};
+use crate::providers::dilithium::{
+    DilithiumKeygenOutput, DilithiumSignatureProvider, DkgSignerConfig, Ed25519TranscriptSigner,
+};
 use threshold_signatures::participants::Participant;
 use threshold_signatures::protocol::{Action, Protocol};
 
 // Import types from qp-rusty-crystals-threshold
 use qp_rusty_crystals_threshold::keygen::dkg::{
-    Action as DkgAction, DilithiumDkg, DkgConfig, DkgOutput,
+    MithrilAction as DkgAction, MithrilDkg as DilithiumDkg, MithrilDkgConfig as DkgConfig,
+    MithrilDkgOutput as DkgOutput,
 };
 use qp_rusty_crystals_threshold::ThresholdConfig;
 
 impl DilithiumSignatureProvider {
     /// Run key generation as a client (both leader and follower).
-    pub(super) async fn run_key_generation_client_internal(
+    ///
+    /// # Arguments
+    /// * `threshold` - The threshold for the (t, n) scheme
+    /// * `channel` - The network channel for communication
+    /// * `signer_config` - Ed25519 signer configuration for transcript authentication
+    pub async fn run_key_generation_client_internal(
         threshold: usize,
         channel: NetworkTaskChannel,
+        signer_config: DkgSignerConfig,
     ) -> anyhow::Result<DilithiumKeygenOutput> {
-        let key = DilithiumKeyGenerationComputation { threshold }
-            .perform_leader_centric_computation(
-                channel,
-                // TODO: Move timeout to config
-                std::time::Duration::from_secs(120),
-            )
-            .await?;
+        let key = DilithiumKeyGenerationComputation {
+            threshold,
+            signer_config,
+        }
+        .perform_leader_centric_computation(
+            channel,
+            // TODO: Move timeout to config
+            std::time::Duration::from_secs(120),
+        )
+        .await?;
         tracing::info!("Dilithium key generation completed");
 
         Ok(key)
@@ -44,6 +56,7 @@ impl DilithiumSignatureProvider {
 /// Computation wrapper for Dilithium DKG that implements MpcLeaderCentricComputation.
 pub struct DilithiumKeyGenerationComputation {
     pub threshold: usize,
+    pub signer_config: DkgSignerConfig,
 }
 
 #[async_trait::async_trait]
@@ -74,10 +87,16 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for DilithiumKeyGenerati
         let threshold_config = ThresholdConfig::new(self.threshold as u32, total_parties as u32)
             .map_err(|e| anyhow::anyhow!("Failed to create threshold config: {:?}", e))?;
 
-        // Create DKG config with NEAR participant IDs directly
+        // Create DKG config with NEAR participant IDs and signer info
         // The threshold library handles ID-to-index mapping internally via ParticipantList
-        let dkg_config = DkgConfig::new(threshold_config, my_id, participant_ids)
-            .map_err(|e| anyhow::anyhow!("Failed to create DKG config: {}", e))?;
+        let dkg_config = DkgConfig::new(
+            threshold_config,
+            my_id,
+            participant_ids,
+            self.signer_config.my_signer,
+            self.signer_config.participant_public_keys,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to create DKG config: {}", e))?;
 
         // Generate random seed for this party
         let mut seed = [0u8; 32];
@@ -111,11 +130,11 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for DilithiumKeyGenerati
 /// ParticipantId (u32). The threshold library handles arbitrary participant IDs
 /// internally via ParticipantList, so no ID-to-index mapping is needed here.
 pub struct DilithiumDkgAdapter {
-    inner: DilithiumDkg,
+    inner: DilithiumDkg<Ed25519TranscriptSigner>,
 }
 
 impl DilithiumDkgAdapter {
-    pub fn new(dkg: DilithiumDkg) -> Self {
+    pub fn new(dkg: DilithiumDkg<Ed25519TranscriptSigner>) -> Self {
         Self { inner: dkg }
     }
 }
@@ -135,7 +154,7 @@ impl Protocol for DilithiumDkgAdapter {
                     let participant: Participant = Participant::from(to_id);
                     Ok(Action::SendPrivate(participant, data))
                 }
-                DkgAction::Return(output) => Ok(Action::Return(output)),
+                DkgAction::Return(output) => Ok(Action::Return(*output)),
             },
             Err(e) => Err(threshold_signatures::errors::ProtocolError::Other(
                 e.to_string(),
@@ -153,19 +172,35 @@ impl Protocol for DilithiumDkgAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::SigningKey;
+    use rand::rngs::OsRng;
+    use std::collections::BTreeMap;
 
     #[test]
     fn test_dilithium_dkg_adapter_creation() {
         // This test verifies the basic setup works with arbitrary NEAR-style IDs
         // The threshold library handles ID-to-index mapping internally
         let threshold_config = ThresholdConfig::new(2, 3).unwrap();
+
+        // Generate test Ed25519 keys
+        let participant_ids = vec![524342676u32, 1313390130, 3526595269];
+        let signing_keys: Vec<SigningKey> = (0..3).map(|_| SigningKey::generate(&mut OsRng)).collect();
+        let mut participant_public_keys = BTreeMap::new();
+        for (i, id) in participant_ids.iter().enumerate() {
+            participant_public_keys.insert(*id, signing_keys[i].verifying_key());
+        }
+
         // Use arbitrary IDs like NEAR would
+        let my_signer = Ed25519TranscriptSigner::new(signing_keys[0].clone());
         let dkg_config = DkgConfig::new(
             threshold_config,
             524342676,
-            vec![524342676, 1313390130, 3526595269],
+            participant_ids,
+            my_signer,
+            participant_public_keys,
         )
         .unwrap();
+
         let seed = [42u8; 32];
         let dkg = DilithiumDkg::new(dkg_config, seed);
 

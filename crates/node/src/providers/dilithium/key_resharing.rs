@@ -138,10 +138,14 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for KeyResharingComputat
         )
         .map_err(|e| anyhow::anyhow!("Failed to create resharing config: {}", e))?;
 
-        // Generate random seed for blinding values
+        // Generate fresh entropy for this party's contribution to the session seed.
+        // The Mithril resharing protocol requires each old-committee member to contribute
+        // independent randomness so that resharing achieves forward secrecy: even if old
+        // shares leak later, the per-session randomness used to derive the new shares
+        // cannot be reconstructed without this fresh entropy.
         let mut seed = [0u8; 32];
         getrandom::getrandom(&mut seed)
-            .map_err(|e| anyhow::anyhow!("Failed to generate random seed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to generate resharing seed: {}", e))?;
 
         // Create the resharing protocol
         let resharing = ResharingProtocol::new(resharing_config, seed);
@@ -251,6 +255,7 @@ mod tests {
         )
         .unwrap();
 
+        // ResharingProtocol needs a per-party entropy seed for forward secrecy
         let resharing = ResharingProtocol::new(resharing_config, [99u8; 32]);
         let _adapter = DilithiumResharingAdapter::new(resharing);
     }
@@ -279,6 +284,8 @@ mod tests {
         )
         .unwrap();
 
+        // ResharingProtocol requires a per-party entropy seed; for new parties it's
+        // unused in entropy aggregation but the constructor still requires it.
         let resharing = ResharingProtocol::new(resharing_config, [99u8; 32]);
         let _adapter = DilithiumResharingAdapter::new(resharing);
     }
@@ -307,6 +314,7 @@ mod tests {
         )
         .unwrap();
 
+        // Per-party entropy seed for forward secrecy
         let resharing = ResharingProtocol::new(resharing_config, [99u8; 32]);
         let _adapter = DilithiumResharingAdapter::new(resharing);
     }
@@ -331,6 +339,22 @@ mod tests {
 
         // Step 1: Run DKG to generate keys
         let dkg_participant_ids = participant_ids.clone();
+
+        // Generate Ed25519 transcript-signing keys for all participants up front
+        // so each runner closure can build a consistent DkgSignerConfig.
+        use crate::providers::dilithium::{DkgSignerConfig, Ed25519TranscriptSigner};
+        use ed25519_dalek::SigningKey;
+        use std::collections::BTreeMap;
+        let mut dkg_signing_keys: BTreeMap<u32, SigningKey> = BTreeMap::new();
+        let mut dkg_verifying_keys: BTreeMap<u32, ed25519_dalek::VerifyingKey> = BTreeMap::new();
+        for pid in &participant_ids {
+            let sk = SigningKey::generate(&mut rand::rngs::OsRng);
+            let vk = sk.verifying_key();
+            dkg_signing_keys.insert(pid.raw(), sk);
+            dkg_verifying_keys.insert(pid.raw(), vk);
+        }
+        let dkg_verifying_keys_for_dkg = dkg_verifying_keys.clone();
+
         let dkg_client_runner = move |client: Arc<MeshNetworkClient>,
                                       mut channel_receiver: mpsc::UnboundedReceiver<
             NetworkTaskChannel,
@@ -341,6 +365,16 @@ mod tests {
                 EpochId::new(1),
                 DomainId(99), // Dilithium domain
                 AttemptId::legacy_attempt_id(),
+            );
+
+            // Build the DKG signer config for this party using the test-generated keys
+            let my_signing_key = dkg_signing_keys
+                .get(&participant_id.raw())
+                .expect("missing test signing key for participant")
+                .clone();
+            let signer_config = DkgSignerConfig::new(
+                my_signing_key,
+                dkg_verifying_keys_for_dkg.clone(),
             );
 
             async move {
@@ -358,6 +392,7 @@ mod tests {
 
                 let key = DilithiumKeyGenerationComputation {
                     threshold: THRESHOLD,
+                    signer_config,
                 }
                 .perform_leader_centric_computation(channel, std::time::Duration::from_secs(120))
                 .await?;

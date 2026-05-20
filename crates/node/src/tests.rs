@@ -283,6 +283,12 @@ pub async fn request_signature_and_await_response(
             Payload::Eddsa(Bytes::new(payload.to_vec()).unwrap())
         }
         SignatureScheme::Bls12381 => unreachable!(),
+        // Dilithium signing is not yet wired into the test signature-request
+        // flow (mpc_client.rs rejects Dilithium domains for sign requests).
+        // When that lands, add a Payload::Dilithium arm here.
+        SignatureScheme::Dilithium => unreachable!(
+            "Dilithium signing is not yet plumbed into the test request flow"
+        ),
     };
     let request = SignatureRequestFromChain {
         entropy: rand::random(),

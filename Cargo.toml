@@ -49,7 +49,7 @@ tee-authority = { path = "crates/tee-authority" }
 test-utils = { path = "crates/test-utils" }
 utilities = { path = "crates/utilities" }
 # Threshold Dilithium (ML-DSA-87) signatures
-qp-rusty-crystals-threshold = { path = "../qp-rusty-crystals/threshold", features = ["serde"] }
+qp-rusty-crystals-threshold = { path = "../qp-rusty-crystals/threshold" }
 qp-rusty-crystals-dilithium = { path = "../qp-rusty-crystals/dilithium" }
 
 aes-gcm = "0.10.3"

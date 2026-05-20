@@ -96,6 +96,16 @@ async fn test_basic_multidomain() {
                 .await
                 .is_some());
             }
+            // Dilithium signing is not yet plumbed into the test request flow;
+            // mpc_client.rs rejects sign requests against Dilithium domains.
+            // When that lands, dispatch to the appropriate request helper here.
+            SignatureScheme::Dilithium => {
+                tracing::warn!(
+                    "Skipping signature request for Dilithium domain {} - \
+                     not yet plumbed into the test request flow",
+                    domain.id.0
+                );
+            }
         }
     }
     let new_domains = vec![
@@ -163,6 +173,16 @@ async fn test_basic_multidomain() {
                 .await
                 .is_some());
             }
+            // Dilithium signing is not yet plumbed into the test request flow;
+            // mpc_client.rs rejects sign requests against Dilithium domains.
+            // When that lands, dispatch to the appropriate request helper here.
+            SignatureScheme::Dilithium => {
+                tracing::warn!(
+                    "Skipping signature request for Dilithium domain {} - \
+                     not yet plumbed into the test request flow",
+                    domain.id.0
+                );
+            }
         }
     }
 
@@ -211,6 +231,16 @@ async fn test_basic_multidomain() {
                 )
                 .await
                 .is_some());
+            }
+            // Dilithium signing is not yet plumbed into the test request flow;
+            // mpc_client.rs rejects sign requests against Dilithium domains.
+            // When that lands, dispatch to the appropriate request helper here.
+            SignatureScheme::Dilithium => {
+                tracing::warn!(
+                    "Skipping signature request for Dilithium domain {} - \
+                     not yet plumbed into the test request flow",
+                    domain.id.0
+                );
             }
         }
     }

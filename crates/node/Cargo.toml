@@ -36,7 +36,7 @@ itertools = { workspace = true }
 k256 = { workspace = true }
 lru = { workspace = true }
 mpc-attestation = { workspace = true }
-mpc-contract = { workspace = true }
+mpc-contract = { workspace = true, features = ["dev-utils"] }
 qp-rusty-crystals-threshold = { workspace = true }
 qp-rusty-crystals-dilithium = { workspace = true }
 getrandom = { workspace = true }

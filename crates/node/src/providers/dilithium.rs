@@ -42,11 +42,13 @@ use crate::providers::SignatureProvider;
 use crate::storage::{DilithiumDerivedShareStorage, SignRequestStorage};
 use crate::types::SignatureId;
 use borsh::{BorshDeserialize, BorshSerialize};
+use ed25519_dalek::{Signature as Ed25519Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use mpc_contract::primitives::domain::DomainId;
 use mpc_contract::primitives::key_state::KeyEventId;
 use mpc_contract::primitives::signature::Tweak;
+use qp_rusty_crystals_threshold::keygen::dkg::TranscriptSigner;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
 
 // Re-export types from qp-rusty-crystals-threshold
@@ -56,11 +58,208 @@ pub use qp_rusty_crystals_threshold::{PrivateKeyShare, PublicKey as DilithiumPub
 // Re-export key registration types
 pub use key_registration::DerivedKeyId;
 
+// ============================================================================
+// Ed25519 Transcript Signer
+// ============================================================================
+
+/// Wrapper type for Ed25519 signatures that implements AsRef<[u8]>.
+///
+/// The threshold library requires signatures to implement `AsRef<[u8]>` for serialization,
+/// but `ed25519_dalek::Signature` doesn't implement this trait directly.
+/// We store the raw bytes to satisfy the AsRef requirement.
+#[derive(Clone)]
+pub struct Ed25519SignatureWrapper {
+    bytes: [u8; 64],
+}
+
+impl AsRef<[u8]> for Ed25519SignatureWrapper {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+impl From<Ed25519Signature> for Ed25519SignatureWrapper {
+    fn from(sig: Ed25519Signature) -> Self {
+        Self {
+            bytes: sig.to_bytes(),
+        }
+    }
+}
+
+/// Ed25519-based transcript signer for Mithril DKG.
+///
+/// Uses the node's P2P Ed25519 key to sign DKG transcripts.
+/// This provides authentication during key generation without requiring
+/// pre-existing Dilithium keys (solving the bootstrapping problem).
+///
+/// # Domain separation
+///
+/// The same `SigningKey` is also used for TLS, libp2p peer identity, and
+/// migration handshakes (see `PersistentSecrets::p2p_private_key`). To prevent
+/// any cross-protocol signature confusion — e.g. a TLS or libp2p signature
+/// being replayable as a DKG-transcript signature, or vice versa — every
+/// payload passed to `ed25519_dalek` is prefixed with a fixed protocol /
+/// version tag before signing or verifying. Other consumers of the same key
+/// do not use this prefix, so the byte strings actually signed in each
+/// protocol are disjoint by construction.
+///
+/// **Versioning:** the prefix carries an explicit version (`v1`). Any future
+/// change to the transcript bytes, or to the signing-key derivation, MUST bump
+/// the version so old and new signatures cannot be cross-verified.
+#[derive(Clone)]
+pub struct Ed25519TranscriptSigner {
+    signing_key: SigningKey,
+}
+
+/// Domain-separation prefix for DKG transcript signatures.
+/// Prepended to the 32-byte transcript hash before signing/verifying.
+/// MUST be bumped if the transcript format or signing-key derivation ever changes.
+const DKG_TRANSCRIPT_SIG_DOMAIN: &[u8] = b"qp-dilithium-dkg-transcript-v1";
+
+/// Build the bytes actually fed to `ed25519_dalek` from a transcript hash.
+fn dkg_transcript_sig_payload(transcript_hash: &[u8; 32]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(DKG_TRANSCRIPT_SIG_DOMAIN.len() + 32);
+    payload.extend_from_slice(DKG_TRANSCRIPT_SIG_DOMAIN);
+    payload.extend_from_slice(transcript_hash);
+    payload
+}
+
+impl Ed25519TranscriptSigner {
+    /// Create a new transcript signer from an Ed25519 signing key.
+    pub fn new(signing_key: SigningKey) -> Self {
+        Self { signing_key }
+    }
+}
+
+impl TranscriptSigner for Ed25519TranscriptSigner {
+    type Signature = Ed25519SignatureWrapper;
+    type PublicKey = VerifyingKey;
+
+    fn sign(&self, transcript_hash: &[u8; 32]) -> Self::Signature {
+        let payload = dkg_transcript_sig_payload(transcript_hash);
+        Ed25519SignatureWrapper::from(self.signing_key.sign(&payload))
+    }
+
+    fn verify(
+        public_key: &Self::PublicKey,
+        transcript_hash: &[u8; 32],
+        signature: &Self::Signature,
+    ) -> bool {
+        let payload = dkg_transcript_sig_payload(transcript_hash);
+        let sig = Ed25519Signature::from_bytes(&signature.bytes);
+        public_key.verify(&payload, &sig).is_ok()
+    }
+
+    fn verify_bytes(
+        public_key: &Self::PublicKey,
+        transcript_hash: &[u8; 32],
+        signature_bytes: &[u8],
+    ) -> bool {
+        if signature_bytes.len() != 64 {
+            return false;
+        }
+        let Ok(sig_bytes): Result<[u8; 64], _> = signature_bytes.try_into() else {
+            return false;
+        };
+        let signature = Ed25519Signature::from_bytes(&sig_bytes);
+        let payload = dkg_transcript_sig_payload(transcript_hash);
+        public_key.verify(&payload, &signature).is_ok()
+    }
+
+    fn public_key(&self) -> Self::PublicKey {
+        self.signing_key.verifying_key()
+    }
+}
+
+/// Configuration for transcript signing in Dilithium DKG.
+///
+/// Contains this party's Ed25519 signing key and public keys of all participants.
+#[derive(Clone)]
+pub struct DkgSignerConfig {
+    /// This party's Ed25519 signer for transcript authentication
+    pub my_signer: Ed25519TranscriptSigner,
+    /// Public keys of all participants (keyed by raw ParticipantId)
+    pub participant_public_keys: BTreeMap<u32, VerifyingKey>,
+}
+
+impl DkgSignerConfig {
+    /// Create a new DKG signer configuration.
+    pub fn new(
+        my_signing_key: SigningKey,
+        participant_public_keys: BTreeMap<u32, VerifyingKey>,
+    ) -> Self {
+        Self {
+            my_signer: Ed25519TranscriptSigner::new(my_signing_key),
+            participant_public_keys,
+        }
+    }
+}
+
 /// Keygen output for Dilithium threshold signatures.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+///
+/// Uses borsh for internal serialization, with a custom serde implementation
+/// that wraps the borsh bytes. This allows integration with near-mpc's
+/// serde-based keyshare storage while the threshold crate uses borsh.
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct DilithiumKeygenOutput {
     pub public_key: DilithiumPublicKey,
     pub private_share: PrivateKeyShare,
+}
+
+// Custom serde implementation that serializes as borsh bytes
+impl Serialize for DilithiumKeygenOutput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let bytes = borsh::to_vec(self).map_err(serde::ser::Error::custom)?;
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for DilithiumKeygenOutput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct BytesVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for BytesVisitor {
+            type Value = DilithiumKeygenOutput;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("borsh-encoded DilithiumKeygenOutput bytes")
+            }
+
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                borsh::from_slice(v).map_err(serde::de::Error::custom)
+            }
+
+            fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                borsh::from_slice(&v).map_err(serde::de::Error::custom)
+            }
+
+            // Also handle seq for JSON compatibility (bytes often serialize as arrays)
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut bytes = Vec::new();
+                while let Some(byte) = seq.next_element::<u8>()? {
+                    bytes.push(byte);
+                }
+                borsh::from_slice(&bytes).map_err(serde::de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_bytes(BytesVisitor)
+    }
 }
 
 /// Unique identifier for a key registration request.
@@ -99,6 +298,9 @@ pub struct DilithiumSignatureProvider {
     derived_shares: Arc<RwLock<HashMap<DerivedKeyId, DilithiumKeygenOutput>>>,
     /// Persistent storage for derived keyshares
     derived_share_storage: Arc<DilithiumDerivedShareStorage>,
+    /// Signer configuration for DKG transcript signing (used in key registration).
+    /// Always present — the coordinator builds it from the node's P2P key on startup.
+    dkg_signer_config: DkgSignerConfig,
 }
 
 impl DilithiumSignatureProvider {
@@ -106,6 +308,9 @@ impl DilithiumSignatureProvider {
     ///
     /// This constructor loads any existing derived keyshares from persistent storage
     /// into the in-memory cache for fast access during signing.
+    ///
+    /// # Arguments
+    /// * `dkg_signer_config` - Signer config for DKG transcript signing (used in key registration)
     pub fn new(
         config: Arc<ConfigFile>,
         mpc_config: Arc<MpcConfig>,
@@ -113,6 +318,7 @@ impl DilithiumSignatureProvider {
         sign_request_store: Arc<SignRequestStorage>,
         keyshares: HashMap<DomainId, DilithiumKeygenOutput>,
         derived_share_storage: Arc<DilithiumDerivedShareStorage>,
+        dkg_signer_config: DkgSignerConfig,
     ) -> Self {
         // Load existing derived shares from persistent storage
         let mut derived_shares_map = HashMap::new();
@@ -152,6 +358,7 @@ impl DilithiumSignatureProvider {
             keyshares,
             derived_shares: Arc::new(RwLock::new(derived_shares_map)),
             derived_share_storage,
+            dkg_signer_config,
         }
     }
 
@@ -211,10 +418,16 @@ impl SignatureProvider for DilithiumSignatureProvider {
     }
 
     async fn run_key_generation_client(
-        threshold: usize,
-        channel: NetworkTaskChannel,
+        _threshold: usize,
+        _channel: NetworkTaskChannel,
     ) -> anyhow::Result<Self::KeygenOutput> {
-        Self::run_key_generation_client_internal(threshold, channel).await
+        // This trait method is never called for Dilithium; the keygen path goes
+        // directly through `run_key_generation_client_internal`, which takes the
+        // additional `DkgSignerConfig` argument that the trait signature cannot
+        // express. Compare `VerifyForeignTxProvider`, which uses the same pattern.
+        anyhow::bail!(
+            "this method is never called; Dilithium keygen uses run_key_generation_client_internal"
+        )
     }
 
     async fn run_key_resharing_client(
@@ -248,8 +461,12 @@ impl SignatureProvider for DilithiumSignatureProvider {
                 }
                 DilithiumTaskId::KeyRegistration { id } => {
                     // Handle key registration as follower
-                    self.handle_key_registration_as_follower(channel, id)
-                        .await?;
+                    self.handle_key_registration_as_follower(
+                        channel,
+                        id,
+                        self.dkg_signer_config.clone(),
+                    )
+                    .await?;
                 }
             },
             _ => anyhow::bail!(
@@ -332,5 +549,48 @@ mod tests {
         let serialized = borsh::to_vec(&task_id).unwrap();
         let deserialized: DilithiumTaskId = borsh::from_slice(&serialized).unwrap();
         assert_eq!(task_id, deserialized);
+    }
+
+    /// The DKG-transcript-signing key is reused as the node's P2P/TLS key.
+    /// Domain separation ensures that a signature produced for some other
+    /// protocol's payload (with the same 32-byte shape) cannot be replayed
+    /// as a DKG-transcript signature, and vice versa.
+    #[test]
+    fn dkg_transcript_signature_is_domain_separated() {
+        use ed25519_dalek::Signer;
+        let mut rng = rand::rngs::OsRng;
+        let sk = SigningKey::generate(&mut rng);
+        let vk = sk.verifying_key();
+
+        let transcript_hash = [0xABu8; 32];
+
+        // A signature produced by Ed25519TranscriptSigner is a signature over
+        // the DOMAIN-PREFIXED payload, not the bare 32-byte hash.
+        let signer = Ed25519TranscriptSigner::new(sk.clone());
+        let dkg_sig = signer.sign(&transcript_hash);
+
+        // It must verify through the trait (which applies the same prefix on
+        // verify), but must NOT verify against the bare hash bytes.
+        assert!(Ed25519TranscriptSigner::verify(&vk, &transcript_hash, &dkg_sig));
+        let raw_sig = Ed25519Signature::from_bytes(&dkg_sig.bytes);
+        assert!(
+            vk.verify(&transcript_hash, &raw_sig).is_err(),
+            "DKG transcript sig must NOT verify against bare hash bytes (domain separation broken)"
+        );
+
+        // Conversely, a signature produced by signing the bare 32-byte hash
+        // with the SAME key (i.e. some other protocol that happened to pick
+        // the same shape) must NOT verify as a DKG-transcript signature.
+        let cross_protocol_sig = sk.sign(&transcript_hash);
+        let wrapped = Ed25519SignatureWrapper::from(cross_protocol_sig);
+        assert!(
+            !Ed25519TranscriptSigner::verify(&vk, &transcript_hash, &wrapped),
+            "Cross-protocol signature over bare hash must NOT verify as a DKG-transcript signature"
+        );
+        assert!(!Ed25519TranscriptSigner::verify_bytes(
+            &vk,
+            &transcript_hash,
+            &cross_protocol_sig.to_bytes()
+        ));
     }
 }

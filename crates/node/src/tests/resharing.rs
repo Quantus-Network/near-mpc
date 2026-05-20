@@ -97,6 +97,15 @@ async fn test_key_resharing_simple(
             .await
             .is_some());
         }
+        // Dilithium signing is not yet plumbed into the test request flow;
+        // mpc_client.rs rejects sign requests against Dilithium domains.
+        SignatureScheme::Dilithium => {
+            tracing::warn!(
+                "Skipping signature request for Dilithium domain {} - \
+                 not yet plumbed into the test request flow",
+                domain.id.0
+            );
+        }
     }
 
     setup
@@ -140,6 +149,15 @@ async fn test_key_resharing_simple(
             )
             .await
             .is_some());
+        }
+        // Dilithium signing is not yet plumbed into the test request flow;
+        // mpc_client.rs rejects sign requests against Dilithium domains.
+        SignatureScheme::Dilithium => {
+            tracing::warn!(
+                "Skipping signature request for Dilithium domain {} - \
+                 not yet plumbed into the test request flow",
+                domain.id.0
+            );
         }
     }
 }

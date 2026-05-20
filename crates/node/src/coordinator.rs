@@ -20,6 +20,7 @@ use crate::network::{
 use crate::p2p::new_tls_mesh_network;
 use crate::primitives::MpcTaskId;
 use crate::providers::ckd::CKDProvider;
+use crate::providers::dilithium::DkgSignerConfig;
 use crate::providers::eddsa::{EddsaSignatureProvider, EddsaTaskId};
 use crate::providers::robust_ecdsa::RobustEcdsaSignatureProvider;
 use crate::providers::verify_foreign_tx::VerifyForeignTxProvider;
@@ -31,12 +32,13 @@ use crate::tracking::{self};
 use crate::web::DebugRequest;
 use anyhow::Context;
 use contract_interface::types as dtos;
+use ed25519_dalek::SigningKey;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use mpc_contract::primitives::domain::{DomainId, SignatureScheme};
 use mpc_contract::primitives::key_state::EpochId;
 use near_time::Clock;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use threshold_signatures::{confidential_key_derivation, ecdsa, frost::eddsa};
@@ -46,6 +48,18 @@ use tokio::sync::{broadcast, mpsc, watch, RwLock};
 use tokio_metrics::RuntimeMonitor;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
+
+/// Build DkgSignerConfig from MpcConfig and P2P signing key.
+///
+/// This creates the signer configuration needed for Dilithium DKG transcript signing,
+/// using Ed25519 keys that nodes already have for P2P communication.
+fn build_dkg_signer_config(mpc_config: &MpcConfig, p2p_key: &SigningKey) -> DkgSignerConfig {
+    let mut participant_public_keys = BTreeMap::new();
+    for participant in &mpc_config.participants.participants {
+        participant_public_keys.insert(participant.id.raw(), participant.p2p_public_key);
+    }
+    DkgSignerConfig::new(p2p_key.clone(), participant_public_keys)
+}
 
 /// Main entry point for the MPC node logic. Assumes the existence of an
 /// indexer. Queries and monitors the contract for state transitions, and act
@@ -289,6 +303,9 @@ where
             mpc_config.my_participant_id
         ));
 
+        // Build signer config for Dilithium DKG (uses Ed25519 P2P keys)
+        let dilithium_signer_config = build_dkg_signer_config(&mpc_config, p2p_key);
+
         let (sender, receiver) = new_tls_mesh_network(&mpc_config, p2p_key).await?;
         let (network_client, channel_receiver, _handle) =
             run_network_client(Arc::new(sender), Box::new(receiver));
@@ -299,6 +316,7 @@ where
                 key_event_receiver,
                 chain_txn_sender,
                 mpc_config.participants.threshold as usize,
+                dilithium_signer_config,
             )
             .await?;
         } else {
@@ -308,6 +326,7 @@ where
                 key_event_receiver,
                 chain_txn_sender,
                 mpc_config.participants.threshold as usize,
+                dilithium_signer_config,
             )
             .await?;
         }

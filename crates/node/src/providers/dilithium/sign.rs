@@ -234,6 +234,10 @@ impl MpcLeaderCentricComputation<Option<DilithiumSignature>> for DilithiumSignCo
         // Get the leader ID from the channel
         let leader_id = channel.sender().get_leader().raw();
 
+        // Generate a unique seed for this signing session
+        // This must be cryptographically random and unique per session
+        let round1_seed: [u8; 32] = rand::random();
+
         // Create the signing protocol with NEAR participant IDs directly
         // The threshold library handles ID-to-index mapping internally via ParticipantList
         // The leader is responsible for combine/retry decisions in the 4-round protocol
@@ -244,7 +248,9 @@ impl MpcLeaderCentricComputation<Option<DilithiumSignature>> for DilithiumSignCo
             participant_ids,
             my_id,
             leader_id,
-        );
+            round1_seed,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to create signing protocol: {:?}", e))?;
 
         // Wrap in cait-sith compatible adapter
         // The adapter only converts between NEAR's Participant type and our u32 IDs
@@ -299,7 +305,16 @@ impl Protocol for DilithiumProtocolAdapter {
     fn message(&mut self, from: Participant, data: threshold_signatures::protocol::MessageData) {
         // Convert cait-sith Participant to our ParticipantId (u32)
         let from_id: u32 = from.into();
-        self.inner.message(from_id, data);
+        // The cait-sith Protocol trait's `message` is infallible, so we have to
+        // absorb deserialization / malformed-message errors here. We log them
+        // rather than propagating, because a single bad frame from a peer
+        // should not tear down the whole signing instance — the protocol will
+        // simply time out waiting for that peer and the outer mpc-node retry
+        // machinery (a fresh ChannelId, a fresh DilithiumSignProtocol) will
+        // take over on the next tick.
+        if let Err(e) = self.inner.message(from_id, data) {
+            tracing::warn!(target: "dilithium", "Discarding malformed message from {}: {}", from_id, e);
+        }
     }
 }
 

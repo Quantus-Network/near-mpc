@@ -336,7 +336,7 @@ impl DilithiumDerivedShareStorage {
         output: &crate::providers::dilithium::DilithiumKeygenOutput,
     ) -> anyhow::Result<()> {
         let key = Self::make_key(id);
-        let value = serde_json::to_vec(output)?;
+        let value = borsh::to_vec(output)?;
         let mut update = self.db.update();
         update.put(DBCol::DilithiumDerivedShare, &key, &value);
         update.commit()?;
@@ -361,7 +361,7 @@ impl DilithiumDerivedShareStorage {
             let (key_bytes, value_bytes) = item?;
             if let Some(id) = Self::parse_key(&key_bytes) {
                 let output: crate::providers::dilithium::DilithiumKeygenOutput =
-                    serde_json::from_slice(&value_bytes)?;
+                    borsh::from_slice(&value_bytes)?;
                 results.push((id, output));
             }
         }

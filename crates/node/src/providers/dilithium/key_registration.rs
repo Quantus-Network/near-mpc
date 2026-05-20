@@ -16,18 +16,16 @@ use crate::primitives::ParticipantId;
 use crate::protocol::run_protocol;
 use crate::providers::dilithium::{
     DilithiumKeygenOutput, DilithiumPublicKey, DilithiumSignatureProvider, DilithiumTaskId,
-    KeyRegistrationId, PrivateKeyShare,
+    DkgSignerConfig, KeyRegistrationId, PrivateKeyShare,
 };
 use mpc_contract::primitives::domain::DomainId;
 use mpc_contract::primitives::signature::Tweak;
 use std::time::Duration;
-use threshold_signatures::participants::Participant;
-use threshold_signatures::protocol::{Action, Protocol};
 
 // Import types from qp-rusty-crystals-threshold
 use qp_rusty_crystals_threshold::derivation::derive_dkg_contribution;
 use qp_rusty_crystals_threshold::keygen::dkg::{
-    Action as DkgAction, DilithiumDkg, DkgConfig, DkgOutput,
+    MithrilDkg as DilithiumDkg, MithrilDkgConfig as DkgConfig, MithrilDkgOutput as DkgOutput,
 };
 use qp_rusty_crystals_threshold::ThresholdConfig;
 
@@ -58,10 +56,16 @@ impl DilithiumSignatureProvider {
     /// by their master share + the tweak to ensure determinism.
     ///
     /// Returns the derived public key on success.
+    ///
+    /// # Arguments
+    /// * `domain_id` - The domain ID for the master key
+    /// * `tweak` - The derivation tweak (from account_id + path)
+    /// * `signer_config` - Ed25519 signer configuration for transcript authentication
     pub async fn run_key_registration_as_leader(
         &self,
         domain_id: DomainId,
         tweak: Tweak,
+        signer_config: DkgSignerConfig,
     ) -> anyhow::Result<DilithiumPublicKey> {
         // Get the master keyshare for this domain
         let master_keygen_output = self
@@ -102,6 +106,7 @@ impl DilithiumSignatureProvider {
             master_share: master_keygen_output.private_share.clone(),
             tweak: tweak.as_bytes(),
             threshold,
+            signer_config,
         }
         .perform_leader_centric_computation(
             channel,
@@ -129,10 +134,16 @@ impl DilithiumSignatureProvider {
     ///
     /// The KeyRegistrationId contains the full 32-byte tweak, so we don't need to look
     /// anything up - we have all the information needed to participate in the DKG.
+    ///
+    /// # Arguments
+    /// * `channel` - The network channel for communication
+    /// * `reg_id` - The key registration ID containing domain and tweak
+    /// * `signer_config` - Ed25519 signer configuration for transcript authentication
     pub async fn handle_key_registration_as_follower(
         &self,
         channel: NetworkTaskChannel,
         reg_id: super::KeyRegistrationId,
+        signer_config: DkgSignerConfig,
     ) -> anyhow::Result<()> {
         tracing::info!(
             "Handling key registration as follower for domain {:?}",
@@ -154,6 +165,7 @@ impl DilithiumSignatureProvider {
             master_share: master_keygen_output.private_share.clone(),
             tweak: tweak_bytes,
             threshold,
+            signer_config,
         }
         .perform_leader_centric_computation(channel, Duration::from_secs(120))
         .await?;
@@ -179,6 +191,8 @@ pub struct DilithiumDerivedKeyComputation {
     pub tweak: [u8; 32],
     /// Threshold for the derived key (same as master key)
     pub threshold: usize,
+    /// Ed25519 signer configuration for transcript authentication
+    pub signer_config: DkgSignerConfig,
 }
 
 #[async_trait::async_trait]
@@ -208,9 +222,15 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for DilithiumDerivedKeyC
         let threshold_config = ThresholdConfig::new(self.threshold as u32, total_parties as u32)
             .map_err(|e| anyhow::anyhow!("Failed to create threshold config: {:?}", e))?;
 
-        // Create DKG config
-        let dkg_config = DkgConfig::new(threshold_config, my_id, participant_ids)
-            .map_err(|e| anyhow::anyhow!("Failed to create DKG config: {}", e))?;
+        // Create DKG config with signer info
+        let dkg_config = DkgConfig::new(
+            threshold_config,
+            my_id,
+            participant_ids,
+            self.signer_config.my_signer,
+            self.signer_config.participant_public_keys,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to create DKG config: {}", e))?;
 
         // Derive the DKG seed from the master share and tweak.
         // This ensures:
@@ -228,7 +248,12 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for DilithiumDerivedKeyC
         let dkg = DilithiumDkg::new(dkg_config, seed);
 
         // Wrap in cait-sith compatible adapter
-        let adapter = DilithiumDerivedDkgAdapter::new(dkg);
+        // Reuse the DKG adapter from the regular key-generation path. The
+        // derived-key DKG is functionally identical from the protocol-driver
+        // perspective: the only difference is how the seed was derived
+        // (deterministically from master share + tweak, computed above), and
+        // that derivation happens before the adapter wraps the DKG instance.
+        let adapter = super::key_generation::DilithiumDkgAdapter::new(dkg);
 
         // Run the protocol
         let output: DkgOutput =
@@ -247,45 +272,9 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for DilithiumDerivedKeyC
 
 /// Adapter that wraps DilithiumDkg for derived key generation.
 ///
-/// This is identical to the regular DKG adapter, but used for derived keys
-/// where the seed is deterministically derived from master share + tweak.
-pub struct DilithiumDerivedDkgAdapter {
-    inner: DilithiumDkg,
-}
-
-impl DilithiumDerivedDkgAdapter {
-    pub fn new(dkg: DilithiumDkg) -> Self {
-        Self { inner: dkg }
-    }
-}
-
-impl Protocol for DilithiumDerivedDkgAdapter {
-    type Output = DkgOutput;
-
-    fn poke(
-        &mut self,
-    ) -> Result<Action<Self::Output>, threshold_signatures::errors::ProtocolError> {
-        match self.inner.poke() {
-            Ok(action) => match action {
-                DkgAction::Wait => Ok(Action::Wait),
-                DkgAction::SendMany(data) => Ok(Action::SendMany(data)),
-                DkgAction::SendPrivate(to_id, data) => {
-                    let participant: Participant = Participant::from(to_id);
-                    Ok(Action::SendPrivate(participant, data))
-                }
-                DkgAction::Return(output) => Ok(Action::Return(output)),
-            },
-            Err(e) => Err(threshold_signatures::errors::ProtocolError::Other(
-                e.to_string(),
-            )),
-        }
-    }
-
-    fn message(&mut self, from: Participant, data: threshold_signatures::protocol::MessageData) {
-        let from_id: u32 = from.into();
-        self.inner.message(from_id, data);
-    }
-}
+/// The derived-key DKG protocol is identical to the regular DKG once the seed
+/// has been derived, so we reuse `super::key_generation::DilithiumDkgAdapter`
+/// rather than maintain a parallel adapter type.
 
 #[cfg(test)]
 mod tests {

@@ -1,9 +1,22 @@
+//! Key generation event handling for all signature schemes.
+//!
+//! ## `dilithium_signer_config` plumbing
+//!
+//! Several functions in this module take a `dilithium_signer_config:
+//! DkgSignerConfig` parameter. It is required by the Dilithium DKG path
+//! (which uses Ed25519 signatures over the protocol transcript for
+//! authentication) and is silently unused by ECDSA / EdDSA / CKD keygen.
+//! It is plumbed through the per-scheme dispatch in
+//! `keygen_computation_inner` rather than fetched from a global so that the
+//! coordinator can own the signer's lifetime and clone it across attempts.
+
 use crate::indexer::participants::KeyEventIdComparisonResult;
 use crate::indexer::tx_sender::TransactionSender;
 use crate::indexer::types::{
     ChainStartKeygenArgs, ChainStartReshareArgs, ChainVoteAbortKeyEventInstanceArgs,
 };
 use crate::network::MeshNetworkClient;
+use crate::providers::dilithium::DkgSignerConfig;
 use crate::providers::eddsa::{EddsaSignatureProvider, EddsaTaskId};
 use crate::providers::EcdsaTaskId;
 use crate::tracking::AutoAbortTaskCollection;
@@ -39,6 +52,9 @@ use tracing::{error, info};
 /// - runs the distributed computation with other participants
 /// - commits the new keyshare to storage.
 /// - votes for the generated public key.
+///
+/// `dilithium_signer_config` is consumed only by the Dilithium DKG path
+/// (see module-level note); other signature schemes ignore it.
 pub async fn keygen_computation_inner(
     channel: NetworkTaskChannel,
     keyshare_storage: Arc<RwLock<KeyshareStorage>>,
@@ -47,6 +63,7 @@ pub async fn keygen_computation_inner(
     key_id: KeyEventId,
     domain: DomainConfig,
     threshold: usize,
+    dilithium_signer_config: DkgSignerConfig,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(key_id.domain_id == domain.id, "Domain mismatch");
     let keyshare_handle = keyshare_storage
@@ -85,7 +102,12 @@ pub async fn keygen_computation_inner(
         }
         SignatureScheme::Dilithium => {
             let keyshare =
-                DilithiumSignatureProvider::run_key_generation_client(threshold, channel).await?;
+                DilithiumSignatureProvider::run_key_generation_client_internal(
+                    threshold,
+                    channel,
+                    dilithium_signer_config,
+                )
+                .await?;
             let public_key = keyshare.public_key.into_contract_interface_type();
             (KeyshareData::Dilithium(keyshare), public_key)
         }
@@ -115,6 +137,9 @@ pub async fn keygen_computation_inner(
 ///  - Waits for the key event to start.
 ///  - Interrupts the inner computation if the key event expires.
 ///  - Sends a `vote_abort_key_event_instance` transaction if the inner computation fails.
+///
+/// `dilithium_signer_config` is consumed only by the Dilithium DKG path
+/// (see module-level note); other signature schemes ignore it.
 async fn keygen_computation(
     mut contract_key_event_id: watch::Receiver<ContractKeyEventInstance>,
     channel: NetworkTaskChannel,
@@ -122,6 +147,7 @@ async fn keygen_computation(
     chain_txn_sender: impl TransactionSender,
     key_id: KeyEventId,
     threshold: usize,
+    dilithium_signer_config: DkgSignerConfig,
 ) -> anyhow::Result<()> {
     let key_event = wait_for_contract_catchup(&mut contract_key_event_id, key_id).await;
     let inner = keygen_computation_inner(
@@ -132,6 +158,7 @@ async fn keygen_computation(
         key_id,
         key_event.domain,
         threshold,
+        dilithium_signer_config,
     );
     let expiration = key_event_id_expiration(contract_key_event_id, key_id);
     tokio::select! {
@@ -408,12 +435,16 @@ const MAX_LATENCY_BEFORE_EXPECTING_TRANSACTION_TO_FINALIZE: Duration = Duration:
 /// Handles multiple domains and attempts. It does not return, except in case of catastrophic
 /// failure (node shutting down). The coordinator is expected to interrupt this when the
 /// contract state transitions out of the key generation state.
+///
+/// `dilithium_signer_config` is consumed only by the Dilithium DKG path
+/// (see module-level note); other signature schemes ignore it.
 pub async fn keygen_leader(
     client: Arc<MeshNetworkClient>,
     keyshare_storage: Arc<RwLock<KeyshareStorage>>,
     mut key_event_receiver: watch::Receiver<ContractKeyEventInstance>,
     chain_txn_sender: impl TransactionSender,
     threshold: usize,
+    dilithium_signer_config: DkgSignerConfig,
 ) -> anyhow::Result<()> {
     loop {
         // Wait for all participants to be connected. Otherwise, computations are most likely going
@@ -477,6 +508,7 @@ pub async fn keygen_leader(
             chain_txn_sender.clone(),
             key_event_id,
             threshold,
+            dilithium_signer_config.clone(),
         )
         .await
         {
@@ -491,12 +523,16 @@ pub async fn keygen_leader(
 
 /// The follower logic for an entire key generation (initializing) state.
 /// See `keygen_leader` for more details that are in common.
+///
+/// `dilithium_signer_config` is consumed only by the Dilithium DKG path
+/// (see module-level note); other signature schemes ignore it.
 pub async fn keygen_follower(
     mut channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannel>,
     keyshare_storage: Arc<RwLock<KeyshareStorage>>,
     key_event_receiver: watch::Receiver<ContractKeyEventInstance>,
     chain_txn_sender: impl TransactionSender + 'static,
     threshold: usize,
+    dilithium_signer_config: DkgSignerConfig,
 ) -> anyhow::Result<()> {
     let mut tasks = AutoAbortTaskCollection::new();
     loop {
@@ -526,6 +562,7 @@ pub async fn keygen_follower(
                 chain_txn_sender.clone(),
                 key_event_id,
                 threshold,
+                dilithium_signer_config.clone(),
             ),
         );
     }
