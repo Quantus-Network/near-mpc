@@ -103,8 +103,12 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for DilithiumKeyGenerati
         getrandom::getrandom(&mut seed)
             .map_err(|e| anyhow::anyhow!("Failed to generate random seed: {}", e))?;
 
+        // Derive session nonce from channel ID for SSID computation
+        // All participants in the same channel will derive the same nonce
+        let session_nonce = channel.derive_attempt_nonce();
+
         // Create the DKG protocol
-        let dkg = DilithiumDkg::new(dkg_config, seed);
+        let dkg = DilithiumDkg::new(dkg_config, seed, &session_nonce);
 
         // Wrap in cait-sith compatible adapter
         // The adapter only converts between NEAR's Participant type and our u32 IDs
@@ -165,7 +169,12 @@ impl Protocol for DilithiumDkgAdapter {
     fn message(&mut self, from: Participant, data: threshold_signatures::protocol::MessageData) {
         // Convert cait-sith Participant to our ParticipantId (u32)
         let from_id: u32 = from.into();
-        self.inner.message(from_id, data);
+        // The cait-sith Protocol trait's `message` is infallible, so we absorb any
+        // deserialization errors here. The protocol will simply timeout waiting for
+        // that peer if the message was malformed.
+        if let Err(e) = self.inner.message(from_id, data) {
+            tracing::warn!(target: "dilithium", "Discarding malformed DKG message from {}: {}", from_id, e);
+        }
     }
 }
 
@@ -202,7 +211,8 @@ mod tests {
         .unwrap();
 
         let seed = [42u8; 32];
-        let dkg = DilithiumDkg::new(dkg_config, seed);
+        let session_nonce = [0xAA; 32]; // Test session nonce
+        let dkg = DilithiumDkg::new(dkg_config, seed, &session_nonce);
 
         let _adapter = DilithiumDkgAdapter::new(dkg);
     }

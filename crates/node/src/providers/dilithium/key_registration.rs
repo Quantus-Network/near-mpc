@@ -244,8 +244,12 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for DilithiumDerivedKeyC
             self.master_share.party_id()
         );
 
+        // Derive session nonce from channel ID for SSID computation
+        // All participants in the same channel will derive the same nonce
+        let session_nonce = channel.derive_attempt_nonce();
+
         // Create the DKG protocol with the derived seed
-        let dkg = DilithiumDkg::new(dkg_config, seed);
+        let dkg = DilithiumDkg::new(dkg_config, seed, &session_nonce);
 
         // Wrap in cait-sith compatible adapter
         // Reuse the DKG adapter from the regular key-generation path. The

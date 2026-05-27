@@ -667,6 +667,30 @@ impl NetworkTaskChannel {
         self.sender.task_id
     }
 
+    /// Returns the unique channel ID for this task.
+    ///
+    /// This ID is unique across all participants and all tasks, making it suitable
+    /// for deriving session-specific nonces for cryptographic protocols.
+    pub fn channel_id(&self) -> ChannelId {
+        self.sender.channel_id
+    }
+
+    /// Derives a 32-byte attempt nonce from the channel ID.
+    ///
+    /// This nonce is deterministically derived from the channel ID and can be used
+    /// by threshold signing protocols to compute a session identifier (SSID) that
+    /// binds all protocol messages to this specific signing attempt.
+    ///
+    /// All participants in the same channel will derive the same nonce.
+    pub fn derive_attempt_nonce(&self) -> [u8; 32] {
+        use k256::sha2::{Digest, Sha256};
+        let channel_id = self.sender.channel_id;
+        let mut hasher = Sha256::new();
+        hasher.update(b"dilithium-attempt-nonce-v1");
+        hasher.update(channel_id.0.to_bytes());
+        hasher.finalize().into()
+    }
+
     pub fn participants(&self) -> &[ParticipantId] {
         &self.sender.participants
     }

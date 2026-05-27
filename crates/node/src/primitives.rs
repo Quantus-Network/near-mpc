@@ -55,6 +55,11 @@ impl UniqueId {
         (self.0 & ((1u128 << 32) - 1)) as u32
     }
 
+    /// Returns the unique ID as a 16-byte array (big-endian).
+    pub fn to_bytes(&self) -> [u8; 16] {
+        self.0.to_be_bytes()
+    }
+
     /// Returns the key prefix for the given participant ID. It can be used to
     /// perform a range query in the database for all keys for this participant.
     pub fn prefix_for_participant_id(participant_id: ParticipantId) -> Vec<u8> {

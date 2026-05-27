@@ -238,6 +238,11 @@ impl MpcLeaderCentricComputation<Option<DilithiumSignature>> for DilithiumSignCo
         // This must be cryptographically random and unique per session
         let round1_seed: [u8; 32] = rand::random();
 
+        // Generate attempt nonce for SSID computation
+        // This must be agreed upon by all participants - derived from channel's unique ID
+        // The channel ID is unique per signing attempt, providing session isolation
+        let attempt_nonce: [u8; 32] = channel.derive_attempt_nonce();
+
         // Create the signing protocol with NEAR participant IDs directly
         // The threshold library handles ID-to-index mapping internally via ParticipantList
         // The leader is responsible for combine/retry decisions in the 4-round protocol
@@ -249,6 +254,7 @@ impl MpcLeaderCentricComputation<Option<DilithiumSignature>> for DilithiumSignCo
             my_id,
             leader_id,
             round1_seed,
+            attempt_nonce,
         )
         .map_err(|e| anyhow::anyhow!("Failed to create signing protocol: {:?}", e))?;
 

@@ -147,8 +147,12 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for KeyResharingComputat
         getrandom::getrandom(&mut seed)
             .map_err(|e| anyhow::anyhow!("Failed to generate resharing seed: {}", e))?;
 
+        // Derive session nonce from channel ID for SSID computation
+        // All participants in the same channel will derive the same nonce
+        let session_nonce = channel.derive_attempt_nonce();
+
         // Create the resharing protocol
-        let resharing = ResharingProtocol::new(resharing_config, seed);
+        let resharing = ResharingProtocol::new(resharing_config, seed, &session_nonce);
 
         // Wrap in cait-sith compatible adapter
         let adapter = DilithiumResharingAdapter::new(resharing);
@@ -215,7 +219,12 @@ impl Protocol for DilithiumResharingAdapter {
     fn message(&mut self, from: Participant, data: threshold_signatures::protocol::MessageData) {
         // Convert cait-sith Participant to our ParticipantId (u32)
         let from_id: u32 = from.into();
-        self.inner.message(from_id, data);
+        // The cait-sith Protocol trait's `message` is infallible, so we absorb any
+        // deserialization errors here. The protocol will simply timeout waiting for
+        // that peer if the message was malformed.
+        if let Err(e) = self.inner.message(from_id, data) {
+            tracing::warn!(target: "dilithium", "Discarding malformed resharing message from {}: {}", from_id, e);
+        }
     }
 }
 
@@ -256,7 +265,8 @@ mod tests {
         .unwrap();
 
         // ResharingProtocol needs a per-party entropy seed for forward secrecy
-        let resharing = ResharingProtocol::new(resharing_config, [99u8; 32]);
+        let session_nonce = [0xAA; 32]; // Test session nonce
+        let resharing = ResharingProtocol::new(resharing_config, [99u8; 32], &session_nonce);
         let _adapter = DilithiumResharingAdapter::new(resharing);
     }
 
@@ -286,7 +296,8 @@ mod tests {
 
         // ResharingProtocol requires a per-party entropy seed; for new parties it's
         // unused in entropy aggregation but the constructor still requires it.
-        let resharing = ResharingProtocol::new(resharing_config, [99u8; 32]);
+        let session_nonce = [0xBB; 32]; // Test session nonce
+        let resharing = ResharingProtocol::new(resharing_config, [99u8; 32], &session_nonce);
         let _adapter = DilithiumResharingAdapter::new(resharing);
     }
 
@@ -315,7 +326,8 @@ mod tests {
         .unwrap();
 
         // Per-party entropy seed for forward secrecy
-        let resharing = ResharingProtocol::new(resharing_config, [99u8; 32]);
+        let session_nonce = [0xCC; 32]; // Test session nonce
+        let resharing = ResharingProtocol::new(resharing_config, [99u8; 32], &session_nonce);
         let _adapter = DilithiumResharingAdapter::new(resharing);
     }
 
