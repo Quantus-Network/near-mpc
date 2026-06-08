@@ -8345,7 +8345,7 @@ dependencies = [
 
 [[package]]
 name = "qp-rusty-crystals-dilithium"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "zeroize",
 ]
@@ -8358,8 +8358,6 @@ dependencies = [
  "libm",
  "log",
  "qp-rusty-crystals-dilithium",
- "rand 0.8.5",
- "rand_core 0.6.4",
  "zeroize",
 ]
 

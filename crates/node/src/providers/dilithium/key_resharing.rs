@@ -128,12 +128,12 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for KeyResharingComputat
 
         // Create resharing configuration
         let resharing_config = ResharingConfig::new(
+            self.my_share,
             self.old_threshold as u32,
             old_participant_ids,
             self.new_threshold as u32,
             new_participant_ids,
             my_id,
-            self.my_share,
             self.public_key.clone(),
         )
         .map_err(|e| anyhow::anyhow!("Failed to create resharing config: {}", e))?;
@@ -254,12 +254,12 @@ mod tests {
         let new_participants = vec![524342676u32, 1313390130, 3526595269]; // Same committee
 
         let resharing_config = ResharingConfig::new(
+            Some(shares[0].clone()),
             2,
             old_participants,
             2,
             new_participants,
             524342676, // my_id
-            Some(shares[0].clone()),
             public_key,
         )
         .unwrap();
@@ -284,12 +284,12 @@ mod tests {
 
         // Party 400 is joining - they have no existing share
         let resharing_config = ResharingConfig::new(
+            None,             // no existing share
             2,                // old threshold
             old_participants, // old participants
             2,                // new threshold
             new_participants, // new participants
             400,              // my_id (new party)
-            None,             // no existing share
             public_key,
         )
         .unwrap();
@@ -315,12 +315,12 @@ mod tests {
 
         // Party 100 is staying
         let resharing_config = ResharingConfig::new(
+            Some(shares[0].clone()), // existing share
             2,                       // old threshold
             old_participants,        // old participants
             2,                       // new threshold (both remaining parties needed)
             new_participants,        // new participants
             100,                     // my_id
-            Some(shares[0].clone()), // existing share
             public_key,
         )
         .unwrap();

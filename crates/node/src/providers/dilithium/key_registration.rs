@@ -25,7 +25,7 @@ use std::time::Duration;
 // Import types from qp-rusty-crystals-threshold
 use qp_rusty_crystals_threshold::derivation::derive_dkg_contribution;
 use qp_rusty_crystals_threshold::keygen::dkg::{
-    MithrilDkg as DilithiumDkg, MithrilDkgConfig as DkgConfig, MithrilDkgOutput as DkgOutput,
+    Dkg as DilithiumDkg, DkgConfig, DkgOutput,
 };
 use qp_rusty_crystals_threshold::ThresholdConfig;
 

@@ -20,8 +20,7 @@ use threshold_signatures::protocol::{Action, Protocol};
 
 // Import types from qp-rusty-crystals-threshold
 use qp_rusty_crystals_threshold::keygen::dkg::{
-    MithrilAction as DkgAction, MithrilDkg as DilithiumDkg, MithrilDkgConfig as DkgConfig,
-    MithrilDkgOutput as DkgOutput,
+    DkgAction, Dkg as DilithiumDkg, DkgConfig, DkgOutput,
 };
 use qp_rusty_crystals_threshold::ThresholdConfig;
 
