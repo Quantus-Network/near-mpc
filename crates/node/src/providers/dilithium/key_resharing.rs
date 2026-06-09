@@ -244,14 +244,14 @@ mod tests {
 
     #[test]
     fn test_dilithium_resharing_adapter_creation() {
-        // Test that we can create a resharing adapter with arbitrary NEAR-style IDs
+        // Test that we can create a resharing adapter
         let threshold_config = ThresholdConfig::new(2, 3).unwrap();
         let seed = [42u8; 32];
         let (public_key, shares) = generate_with_dealer(&seed, threshold_config).unwrap();
 
-        // Use arbitrary IDs like NEAR would
-        let old_participants = vec![524342676u32, 1313390130, 3526595269];
-        let new_participants = vec![524342676u32, 1313390130, 3526595269]; // Same committee
+        // Use the party IDs from the generated shares (0, 1, 2)
+        let old_participants = vec![0u32, 1, 2];
+        let new_participants = vec![0u32, 1, 2]; // Same committee
 
         let resharing_config = ResharingConfig::new(
             Some(shares[0].clone()),
@@ -259,7 +259,7 @@ mod tests {
             old_participants,
             2,
             new_participants,
-            524342676, // my_id
+            0, // my_id matches shares[0].party_id()
             public_key,
         )
         .unwrap();
@@ -308,19 +308,19 @@ mod tests {
         let seed = [42u8; 32];
         let (public_key, shares) = generate_with_dealer(&seed, threshold_config).unwrap();
 
-        // Old committee: 3 parties
-        let old_participants = vec![100u32, 200, 300];
-        // New committee: 2 parties (removing party 300)
-        let new_participants = vec![100u32, 200];
+        // Old committee: 3 parties (matching shares party IDs: 0, 1, 2)
+        let old_participants = vec![0u32, 1, 2];
+        // New committee: 2 parties (removing party 2)
+        let new_participants = vec![0u32, 1];
 
-        // Party 100 is staying
+        // Party 0 is staying
         let resharing_config = ResharingConfig::new(
-            Some(shares[0].clone()), // existing share
+            Some(shares[0].clone()), // existing share (party_id = 0)
             2,                       // old threshold
             old_participants,        // old participants
             2,                       // new threshold (both remaining parties needed)
             new_participants,        // new participants
-            100,                     // my_id
+            0,                       // my_id matches shares[0].party_id()
             public_key,
         )
         .unwrap();
