@@ -469,6 +469,10 @@ where
             let chain_txn_sender = chain_txn_sender.clone();
             let network_client = network_client.clone();
             let mpc_config = mpc_config.clone();
+            // Signer config for Dilithium resharing transcript acceptance.
+            // `mpc_config` here holds the *new* epoch's participant set, so
+            // the verifying-key map covers every new committee member.
+            let dilithium_signer_config = build_dkg_signer_config(&mpc_config, p2p_key);
 
             tracking::spawn_checked("key resharing", async move {
                 Self::run_key_resharing(
@@ -480,6 +484,7 @@ where
                     resharing_network_receiver,
                     chain_txn_sender,
                     resharing_state_receiver,
+                    dilithium_signer_config,
                 )
                 .await
             })
@@ -672,6 +677,7 @@ where
         channel_receiver: mpsc::UnboundedReceiver<NetworkTaskChannel>,
         chain_txn_sender: TransactionSender,
         key_event_receiver: watch::Receiver<ContractKeyEventInstance>,
+        dilithium_signer_config: DkgSignerConfig,
     ) -> anyhow::Result<MpcJobResult> {
         tracing::info!("Starting key resharing.");
 
@@ -718,6 +724,7 @@ where
             existing_keyshares,
             new_threshold: mpc_config.participants.threshold as usize,
             old_participants: current_running_state.participants,
+            dilithium_signer_config,
         });
 
         if mpc_config.is_leader_for_key_event() {

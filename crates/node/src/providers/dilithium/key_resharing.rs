@@ -17,13 +17,17 @@ use crate::network::NetworkTaskChannel;
 use crate::primitives::ParticipantId;
 use crate::protocol::run_protocol;
 use crate::providers::dilithium::DilithiumSignatureProvider;
-use crate::providers::dilithium::{DilithiumKeygenOutput, DilithiumPublicKey, PrivateKeyShare};
+use crate::providers::dilithium::{
+    DilithiumKeygenOutput, DilithiumPublicKey, DkgSignerConfig, Ed25519TranscriptSigner,
+    PrivateKeyShare,
+};
 use threshold_signatures::participants::Participant;
 use threshold_signatures::protocol::{Action, Protocol};
 
 // Import types from qp-rusty-crystals-threshold resharing module
 use qp_rusty_crystals_threshold::resharing::{
     Action as ResharingAction, ResharingConfig, ResharingOutput, ResharingProtocol,
+    ResharingSignerConfig,
 };
 
 impl DilithiumSignatureProvider {
@@ -39,17 +43,22 @@ impl DilithiumSignatureProvider {
     /// * `public_key` - The public key being reshared
     /// * `old_participants` - Configuration of the old committee
     /// * `channel` - Network channel for communication
+    /// * `signer_config` - Ed25519 signer configuration for Round 6 transcript acceptance;
+    ///   the verifying-key map must cover every new committee member
+    /// * `epoch` - Monotonic handoff counter bound into the resharing SSID
     ///
     /// # Returns
     ///
     /// A new `DilithiumKeygenOutput` containing the reshared private key share
     /// and the (unchanged) public key.
-    pub(super) async fn run_key_resharing_client_internal(
+    pub(crate) async fn run_key_resharing_client_internal(
         new_threshold: usize,
         key_share: Option<PrivateKeyShare>,
         public_key: DilithiumPublicKey,
         old_participants: &ParticipantsConfig,
         channel: NetworkTaskChannel,
+        signer_config: DkgSignerConfig,
+        epoch: u64,
     ) -> anyhow::Result<DilithiumKeygenOutput> {
         let new_keyshare = KeyResharingComputation {
             new_threshold,
@@ -57,6 +66,8 @@ impl DilithiumSignatureProvider {
             old_threshold: old_participants.threshold as usize,
             my_share: key_share,
             public_key: public_key.clone(),
+            signer_config,
+            epoch,
         }
         .perform_leader_centric_computation(
             channel,
@@ -98,6 +109,16 @@ pub struct KeyResharingComputation {
     my_share: Option<PrivateKeyShare>,
     /// The public key being reshared.
     public_key: DilithiumPublicKey,
+    /// Ed25519 signer configuration for Round 6 transcript acceptance.
+    ///
+    /// Reuses the DKG transcript-signing keys (the nodes' P2P Ed25519 keys).
+    /// This is safe against cross-protocol replay: the 32-byte hash the
+    /// resharing protocol asks us to sign is `compute_accept_hash(ssid,
+    /// transcript_hash)`, which is domain-separated inside the threshold
+    /// crate, so it can never collide with a DKG transcript hash.
+    signer_config: DkgSignerConfig,
+    /// Monotonic handoff counter for this public key, bound into the SSID.
+    epoch: u64,
 }
 
 #[async_trait::async_trait]
@@ -116,6 +137,14 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for KeyResharingComputat
         // Convert old participants to raw u32 IDs
         let old_participant_ids: Vec<u32> = self.old_participants.iter().map(|p| p.raw()).collect();
 
+        // Old members reachable on this mesh (the mesh spans only the new
+        // participant set). Used by the leader as the expected active set.
+        let reachable_old: Vec<u32> = old_participant_ids
+            .iter()
+            .copied()
+            .filter(|id| new_participant_ids.contains(id))
+            .collect();
+
         tracing::debug!(
             "Dilithium key resharing: my_id={}, old_threshold={}, old_participants={:?}, \
              new_threshold={}, new_participants={:?}",
@@ -132,11 +161,21 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for KeyResharingComputat
             self.old_threshold as u32,
             old_participant_ids,
             self.new_threshold as u32,
-            new_participant_ids,
+            new_participant_ids.clone(),
             my_id,
             self.public_key.clone(),
         )
         .map_err(|e| anyhow::anyhow!("Failed to create resharing config: {}", e))?;
+
+        // Build the resharing signer config from the DKG signer config. The
+        // constructor validates that we hold an Ed25519 verifying key for
+        // every new committee member (the accept-signature producers).
+        let resharing_signer_config = ResharingSignerConfig::new(
+            self.signer_config.my_signer,
+            self.signer_config.participant_public_keys,
+            &new_participant_ids,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to create resharing signer config: {}", e))?;
 
         // Generate fresh entropy for this party's contribution to the session seed.
         // The Mithril resharing protocol requires each old-committee member to contribute
@@ -152,7 +191,26 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for KeyResharingComputat
         let session_nonce = channel.derive_attempt_nonce();
 
         // Create the resharing protocol
-        let resharing = ResharingProtocol::new(resharing_config, seed, &session_nonce);
+        let mut resharing = ResharingProtocol::new(
+            resharing_config,
+            resharing_signer_config,
+            seed,
+            &session_nonce,
+            self.epoch,
+        );
+
+        // The resharing mesh spans only the new participant set, so old-only
+        // members are structurally unreachable and the protocol's fast path
+        // (all old members ready) would stall forever. If we are the session
+        // leader, declare the reachable old members (old ∩ new) as the
+        // expected active set: the leader then proposes Act as soon as all of
+        // them have committed. Fails if fewer than t_old old members are
+        // reachable, in which case resharing is impossible on this topology.
+        if resharing.leader() == my_id {
+            resharing
+                .set_expected_active_set(&reachable_old)
+                .map_err(|e| anyhow::anyhow!("Failed to set expected active set: {}", e))?;
+        }
 
         // Wrap in cait-sith compatible adapter
         let adapter = DilithiumResharingAdapter::new(resharing);
@@ -160,6 +218,15 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for KeyResharingComputat
         // Run the protocol
         let output: ResharingOutput =
             run_protocol("dilithium key resharing", channel, adapter).await?;
+
+        // The certificate was already verified internally by the protocol
+        // before it returned (every new committee member's acceptance
+        // signature over the shared transcript hash). Log it for operators.
+        tracing::info!(
+            "Dilithium resharing certificate: active_set={:?}, {} acceptance signatures",
+            output.certificate.active_set,
+            output.certificate.accepts.len()
+        );
 
         // Extract the new private share (will be Some if we're in the new committee)
         let private_share = output
@@ -183,12 +250,12 @@ impl MpcLeaderCentricComputation<DilithiumKeygenOutput> for KeyResharingComputat
 /// ParticipantId (u32). The threshold library handles arbitrary participant IDs
 /// internally via ParticipantList, so no ID-to-index mapping is needed here.
 pub struct DilithiumResharingAdapter {
-    inner: ResharingProtocol,
+    inner: ResharingProtocol<Ed25519TranscriptSigner>,
 }
 
 impl DilithiumResharingAdapter {
     /// Create a new adapter wrapping a ResharingProtocol.
-    pub fn new(resharing: ResharingProtocol) -> Self {
+    pub fn new(resharing: ResharingProtocol<Ed25519TranscriptSigner>) -> Self {
         Self { inner: resharing }
     }
 }
@@ -242,6 +309,33 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
+    /// Generate Ed25519 keys for the given party IDs and build the
+    /// `ResharingSignerConfig` for `my_id` (as `compute` would from a
+    /// `DkgSignerConfig`).
+    fn test_resharing_signer_config(
+        all_participants: &[u32],
+        new_participants: &[u32],
+        my_id: u32,
+    ) -> ResharingSignerConfig<Ed25519TranscriptSigner> {
+        use ed25519_dalek::SigningKey;
+        use std::collections::BTreeMap;
+        let mut my_key = None;
+        let mut verifying_keys = BTreeMap::new();
+        for &id in all_participants {
+            let sk = SigningKey::generate(&mut rand::rngs::OsRng);
+            verifying_keys.insert(id, sk.verifying_key());
+            if id == my_id {
+                my_key = Some(sk);
+            }
+        }
+        ResharingSignerConfig::new(
+            Ed25519TranscriptSigner::new(my_key.expect("my_id must be in all_participants")),
+            verifying_keys,
+            new_participants,
+        )
+        .expect("verifying keys cover the new committee")
+    }
+
     #[test]
     fn test_dilithium_resharing_adapter_creation() {
         // Test that we can create a resharing adapter
@@ -266,7 +360,9 @@ mod tests {
 
         // ResharingProtocol needs a per-party entropy seed for forward secrecy
         let session_nonce = [0xAA; 32]; // Test session nonce
-        let resharing = ResharingProtocol::new(resharing_config, [99u8; 32], &session_nonce);
+        let signer_config = test_resharing_signer_config(&[0, 1, 2], &[0, 1, 2], 0);
+        let resharing =
+            ResharingProtocol::new(resharing_config, signer_config, [99u8; 32], &session_nonce, 0);
         let _adapter = DilithiumResharingAdapter::new(resharing);
     }
 
@@ -297,7 +393,13 @@ mod tests {
         // ResharingProtocol requires a per-party entropy seed; for new parties it's
         // unused in entropy aggregation but the constructor still requires it.
         let session_nonce = [0xBB; 32]; // Test session nonce
-        let resharing = ResharingProtocol::new(resharing_config, [99u8; 32], &session_nonce);
+        let signer_config = test_resharing_signer_config(
+            &[100, 200, 300, 400],
+            &[100, 200, 300, 400],
+            400,
+        );
+        let resharing =
+            ResharingProtocol::new(resharing_config, signer_config, [99u8; 32], &session_nonce, 0);
         let _adapter = DilithiumResharingAdapter::new(resharing);
     }
 
@@ -327,7 +429,9 @@ mod tests {
 
         // Per-party entropy seed for forward secrecy
         let session_nonce = [0xCC; 32]; // Test session nonce
-        let resharing = ResharingProtocol::new(resharing_config, [99u8; 32], &session_nonce);
+        let signer_config = test_resharing_signer_config(&[0, 1, 2], &[0, 1], 0);
+        let resharing =
+            ResharingProtocol::new(resharing_config, signer_config, [99u8; 32], &session_nonce, 0);
         let _adapter = DilithiumResharingAdapter::new(resharing);
     }
 
@@ -354,7 +458,7 @@ mod tests {
 
         // Generate Ed25519 transcript-signing keys for all participants up front
         // so each runner closure can build a consistent DkgSignerConfig.
-        use crate::providers::dilithium::{DkgSignerConfig, Ed25519TranscriptSigner};
+        use crate::providers::dilithium::DkgSignerConfig;
         use ed25519_dalek::SigningKey;
         use std::collections::BTreeMap;
         let mut dkg_signing_keys: BTreeMap<u32, SigningKey> = BTreeMap::new();
@@ -366,6 +470,10 @@ mod tests {
             dkg_verifying_keys.insert(pid.raw(), vk);
         }
         let dkg_verifying_keys_for_dkg = dkg_verifying_keys.clone();
+        // The resharing runner reuses the same transcript-signing keys
+        // (in production both come from the nodes' P2P Ed25519 keys).
+        let resharing_signing_keys = dkg_signing_keys.clone();
+        let resharing_verifying_keys = dkg_verifying_keys.clone();
 
         let dkg_client_runner = move |client: Arc<MeshNetworkClient>,
                                       mut channel_receiver: mpsc::UnboundedReceiver<
@@ -458,6 +566,15 @@ mod tests {
                 AttemptId::legacy_attempt_id(),
             );
 
+            // Signer config for Round 6 transcript acceptance, from the same
+            // Ed25519 keys used for the DKG transcript signatures.
+            let my_signing_key = resharing_signing_keys
+                .get(&participant_id.raw())
+                .expect("missing test signing key for participant")
+                .clone();
+            let signer_config =
+                DkgSignerConfig::new(my_signing_key, resharing_verifying_keys.clone());
+
             async move {
                 let channel = if participant_id == all_participant_ids[0] {
                     client.new_channel_for_task(
@@ -477,6 +594,8 @@ mod tests {
                     old_threshold: THRESHOLD,
                     my_share,
                     public_key: pubkey,
+                    signer_config,
+                    epoch: key_id.epoch_id.get(),
                 }
                 .perform_leader_centric_computation(channel, std::time::Duration::from_secs(120))
                 .await?;

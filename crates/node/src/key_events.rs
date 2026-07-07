@@ -3,12 +3,14 @@
 //! ## `dilithium_signer_config` plumbing
 //!
 //! Several functions in this module take a `dilithium_signer_config:
-//! DkgSignerConfig` parameter. It is required by the Dilithium DKG path
-//! (which uses Ed25519 signatures over the protocol transcript for
-//! authentication) and is silently unused by ECDSA / EdDSA / CKD keygen.
+//! DkgSignerConfig` parameter (for resharing, it travels inside
+//! [`ResharingArgs`]). It is required by the Dilithium DKG and resharing
+//! paths (which use Ed25519 signatures over the protocol transcript for
+//! authentication) and is silently unused by ECDSA / EdDSA / CKD.
 //! It is plumbed through the per-scheme dispatch in
-//! `keygen_computation_inner` rather than fetched from a global so that the
-//! coordinator can own the signer's lifetime and clone it across attempts.
+//! `keygen_computation_inner` / `resharing_computation_inner` rather than
+//! fetched from a global so that the coordinator can own the signer's
+//! lifetime and clone it across attempts.
 
 use crate::indexer::participants::KeyEventIdComparisonResult;
 use crate::indexer::tx_sender::TransactionSender;
@@ -186,6 +188,11 @@ pub struct ResharingArgs {
     pub existing_keyshares: Option<Vec<Keyshare>>,
     pub new_threshold: usize,
     pub old_participants: ParticipantsConfig,
+    /// Ed25519 signer configuration for Dilithium resharing transcript
+    /// acceptance. Built from the new epoch's participant set, so the
+    /// verifying-key map covers every new committee member. Unused by
+    /// other signature schemes.
+    pub dilithium_signer_config: DkgSignerConfig,
 }
 
 /// The key resharing computation (same for both leader and follower) for a single key resharing
@@ -319,6 +326,29 @@ async fn resharing_computation_inner(
             )
             .await?;
             KeyshareData::Bls12381(res)
+        }
+        (dtos::PublicKey::Dilithium(inner_public_key), SignatureScheme::Dilithium) => {
+            let public_key = inner_public_key.try_into_node_type()?;
+            let my_share = existing_keyshare
+                .map(|keyshare| match keyshare.data {
+                    KeyshareData::Dilithium(data) => Ok(data.private_share),
+                    _ => Err(anyhow::anyhow!("Expected dilithium keyshare!")),
+                })
+                .transpose()?;
+            let res = DilithiumSignatureProvider::run_key_resharing_client_internal(
+                args.new_threshold,
+                my_share,
+                public_key,
+                &args.old_participants,
+                channel,
+                args.dilithium_signer_config.clone(),
+                // The contract's epoch ID is a monotonic per-key handoff
+                // counter, exactly what the resharing SSID binds against
+                // cross-epoch replay.
+                key_id.epoch_id.get(),
+            )
+            .await?;
+            KeyshareData::Dilithium(res)
         }
         (public_key, scheme) => {
             return Err(anyhow::anyhow!(

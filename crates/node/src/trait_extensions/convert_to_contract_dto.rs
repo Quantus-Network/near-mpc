@@ -243,6 +243,16 @@ impl TryIntoNodeType<ed25519_dalek::VerifyingKey> for contract_interface::types:
     }
 }
 
+impl TryIntoNodeType<crate::providers::dilithium::DilithiumPublicKey> for dtos::DilithiumPublicKey {
+    type Error = ParsePublicKeyError;
+    fn try_into_node_type(
+        self,
+    ) -> Result<crate::providers::dilithium::DilithiumPublicKey, ParsePublicKeyError> {
+        crate::providers::dilithium::DilithiumPublicKey::from_bytes(self.as_bytes())
+            .map_err(|_| ParsePublicKeyError {})
+    }
+}
+
 impl TryIntoNodeType<ckd::VerifyingKey> for dtos::Bls12381G2PublicKey {
     type Error = ParsePublicKeyError;
     fn try_into_node_type(self) -> Result<ckd::VerifyingKey, ParsePublicKeyError> {

@@ -431,20 +431,19 @@ impl SignatureProvider for DilithiumSignatureProvider {
     }
 
     async fn run_key_resharing_client(
-        new_threshold: usize,
-        key_share: Option<PrivateKeyShare>,
-        public_key: DilithiumPublicKey,
-        old_participants: &ParticipantsConfig,
-        channel: NetworkTaskChannel,
+        _new_threshold: usize,
+        _key_share: Option<PrivateKeyShare>,
+        _public_key: DilithiumPublicKey,
+        _old_participants: &ParticipantsConfig,
+        _channel: NetworkTaskChannel,
     ) -> anyhow::Result<Self::KeygenOutput> {
-        Self::run_key_resharing_client_internal(
-            new_threshold,
-            key_share,
-            public_key,
-            old_participants,
-            channel,
+        // This trait method is never called for Dilithium; the resharing path
+        // goes directly through `run_key_resharing_client_internal`, which
+        // takes the additional `DkgSignerConfig` and `epoch` arguments that
+        // the trait signature cannot express. Same pattern as keygen above.
+        anyhow::bail!(
+            "this method is never called; Dilithium resharing uses run_key_resharing_client_internal"
         )
-        .await
     }
 
     async fn process_channel(&self, channel: NetworkTaskChannel) -> anyhow::Result<()> {

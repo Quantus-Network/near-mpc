@@ -24,6 +24,14 @@ use super::DEFAULT_BLOCK_TIME;
 #[case(2, SignatureScheme::Bls12381, 3)]
 // TODO(#1946): re-enable once it is no longer flaky
 // #[case(3, SignatureScheme::V2Secp256k1, 5)]
+// Dilithium: DKG as 2-of-2, then reshare to 2-of-3. These two committee shapes
+// are explicitly supported resharing targets in qp-rusty-crystals-threshold
+// (measured recovered-partial overshoot below the base bound, kappa = 1);
+// a 3-of-4 target would rely on an unmeasured overshoot at kappa = 1 and could
+// trip the Round 5 norm guard. Case index 3 stays within PortSeed::MAX_CASES;
+// if the V2Secp256k1 case above is re-enabled, give it a distinct index by
+// bumping MAX_CASES.
+#[case(3, SignatureScheme::Dilithium, 2)]
 async fn test_key_resharing_simple(
     #[case] case: u16,
     #[case] scheme: SignatureScheme,
@@ -160,6 +168,125 @@ async fn test_key_resharing_simple(
             );
         }
     }
+}
+
+// Test consecutive Dilithium resharings: a node joining (2-of-2 -> 2-of-3),
+// then a membership swap at the same shape (node 0 leaves, node 3 joins).
+// Consecutive handoffs exercise the epoch binding in the resharing SSID
+// (epoch 1, then 2), and the swap exercises the old-only (dealer without a
+// new share) and new-only (receiver without an old share) roles.
+// Committee shapes are limited to 2-of-2 and 2-of-3, which are supported
+// resharing targets in qp-rusty-crystals-threshold at kappa = 1.
+#[tokio::test]
+#[test_log::test]
+async fn test_key_resharing_dilithium_multistage() {
+    const NUM_PARTICIPANTS: usize = 4;
+    const THRESHOLD: usize = 2;
+    const TXN_DELAY_BLOCKS: u64 = 1;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut setup = IntegrationTestSetup::new(
+        Clock::real(),
+        temp_dir.path(),
+        (0..NUM_PARTICIPANTS)
+            .map(|i| format!("test{}", i).parse().unwrap())
+            .collect(),
+        THRESHOLD,
+        TXN_DELAY_BLOCKS,
+        PortSeed::KEY_RESHARING_DILITHIUM_MULTISTAGE_TEST,
+        std::time::Duration::from_millis(600),
+    );
+
+    // Start with only the first two participants (2-of-2).
+    let mut participants_1 = setup.participants.clone();
+    participants_1.participants.truncate(2);
+    participants_1.threshold = THRESHOLD as u64;
+
+    let domain = DomainConfig {
+        id: DomainId(0),
+        scheme: SignatureScheme::Dilithium,
+        purpose: infer_purpose_from_scheme(SignatureScheme::Dilithium),
+    };
+
+    {
+        let mut contract = setup.indexer.contract_mut().await;
+        contract.initialize(participants_1);
+        contract.add_domains(vec![domain.clone()]);
+    }
+
+    let _runs = setup
+        .configs
+        .into_iter()
+        .map(|config| AutoAbortTask::from(tokio::spawn(config.run())))
+        .collect::<Vec<_>>();
+
+    setup
+        .indexer
+        .wait_for_contract_state(
+            |state| match state {
+                ContractState::Running(running) => {
+                    running.keyset.epoch_id.get() == 0
+                        && running.participants.participants.len() == 2
+                }
+                _ => false,
+            },
+            DEFAULT_MAX_PROTOCOL_WAIT_TIME,
+        )
+        .await
+        .expect("Timeout waiting for initial Dilithium key generation");
+
+    // Dilithium signing is not yet plumbed into the test request flow
+    // (mpc_client.rs rejects sign requests against Dilithium domains), so
+    // reaching Running with the expected keyset is the per-stage assertion.
+
+    // Have the third node join (2-of-3).
+    let mut participants_2 = setup.participants.clone();
+    participants_2.participants.pop();
+    participants_2.threshold = THRESHOLD as u64;
+    setup
+        .indexer
+        .contract_mut()
+        .await
+        .start_resharing(participants_2);
+
+    setup
+        .indexer
+        .wait_for_contract_state(
+            |state| match state {
+                ContractState::Running(running) => {
+                    running.keyset.epoch_id.get() == 1
+                        && running.participants.participants.len() == 3
+                }
+                _ => false,
+            },
+            DEFAULT_MAX_PROTOCOL_WAIT_TIME,
+        )
+        .await
+        .expect("Timeout waiting for first Dilithium resharing (join) to complete");
+
+    // Swap membership: node 0 leaves, node 3 joins (still 2-of-3).
+    let mut participants_3 = setup.participants.clone();
+    participants_3.participants.remove(0);
+    participants_3.threshold = THRESHOLD as u64;
+    setup
+        .indexer
+        .contract_mut()
+        .await
+        .start_resharing(participants_3);
+
+    setup
+        .indexer
+        .wait_for_contract_state(
+            |state| match state {
+                ContractState::Running(running) => {
+                    running.keyset.epoch_id.get() == 2
+                        && running.participants.participants.len() == 3
+                }
+                _ => false,
+            },
+            DEFAULT_MAX_PROTOCOL_WAIT_TIME,
+        )
+        .await
+        .expect("Timeout waiting for second Dilithium resharing (swap) to complete");
 }
 
 // Test two nodes joining and two old nodes leaving.
